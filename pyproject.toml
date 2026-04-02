@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypsa-gui"
+version = "0.1.0"
+description = "A desktop GUI for inspecting, editing, solving, and visualising PyPSA networks"
+authors = [
+{ name = "Alexander Kies" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+"pypsa",
+"pandas",
+"PySide6",
+"matplotlib"
+]
+
+[project.optional-dependencies]
+dev = [
+"pytest",
+"black",
+"ruff"
+]
+
+[project.scripts]
+pypsa-gui = "pypsa_gui.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
