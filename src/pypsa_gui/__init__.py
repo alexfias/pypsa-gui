@@ -1,0 +1,3 @@
+"""
+pypsa-gui package
+"""
