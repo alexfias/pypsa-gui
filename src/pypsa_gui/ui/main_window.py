@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
+    QFileDialog,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -23,6 +24,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
+        self.network: pypsa.Network | None = None
+
         self.setWindowTitle("pypsa-gui")
         self.resize(1200, 800)
 
@@ -35,9 +38,13 @@ class MainWindow(QMainWindow):
         self._show_welcome_message()
 
     def _create_actions(self) -> None:
-        self.open_action = QAction("Open Network...", self)
-        self.open_action.setStatusTip("Open a PyPSA network file")
-        self.open_action.triggered.connect(self.on_open_network)
+        self.open_netcdf_action = QAction("Open NetCDF Network...", self)
+        self.open_netcdf_action.setStatusTip("Open a PyPSA network from a .nc file")
+        self.open_netcdf_action.triggered.connect(self.on_open_netcdf_network)
+
+        self.open_csv_action = QAction("Open CSV Folder...", self)
+        self.open_csv_action.setStatusTip("Open a PyPSA network from a CSV folder")
+        self.open_csv_action.triggered.connect(self.on_open_csv_folder)
 
         self.save_action = QAction("Save", self)
         self.save_action.setStatusTip("Save the current network")
@@ -63,7 +70,9 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("File")
-        file_menu.addAction(self.open_action)
+        file_menu.addAction(self.open_netcdf_action)
+        file_menu.addAction(self.open_csv_action)
+        file_menu.addSeparator()
         file_menu.addAction(self.save_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
@@ -80,7 +89,8 @@ class MainWindow(QMainWindow):
         tool_bar.setMovable(False)
         self.addToolBar(tool_bar)
 
-        tool_bar.addAction(self.open_action)
+        tool_bar.addAction(self.open_netcdf_action)
+        tool_bar.addAction(self.open_csv_action)
         tool_bar.addAction(self.save_action)
         tool_bar.addSeparator()
         tool_bar.addAction(self.run_optimisation_action)
@@ -134,26 +144,75 @@ class MainWindow(QMainWindow):
 
     def _show_welcome_message(self) -> None:
         self.log("Application started.")
-        self.log("Ready.")
+        self.log("No network loaded.")
 
     def log(self, message: str) -> None:
         self.log_output.append(message)
         self.statusBar().showMessage(message, 3000)
 
-    def on_open_network(self) -> None:
-        self.log("Loading demo PyPSA network...")
+    def _set_network(self, network: pypsa.Network) -> None:
+        self.network = network
+        self.central_panel.set_network(network)
+
+        self.log("Network loaded successfully.")
+        self.log(
+            f"Network summary: "
+            f"{len(network.buses)} buses, "
+            f"{len(network.generators)} generators, "
+            f"{len(network.loads)} loads, "
+            f"{len(network.lines)} lines, "
+            f"{len(network.links)} links"
+        )
+
+    def on_open_netcdf_network(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open PyPSA NetCDF Network",
+            "",
+            "NetCDF Files (*.nc);;All Files (*)",
+        )
+
+        if not file_path:
+            self.log("Open NetCDF cancelled.")
+            return
+
+        self.log(f"Loading NetCDF network: {file_path}")
 
         try:
-            network = pypsa.examples.ac_dc_meshed()  # built-in example
-            self.network = network
-
-            self.log("Network loaded successfully.")
-
-            # pass to central panel
-            self.central_panel.set_network(network)
-
+            network = pypsa.Network(file_path)
+            self._set_network(network)
         except Exception as e:
-            self.log(f"Error loading network: {e}")
+            self.log(f"Error loading NetCDF network: {e}")
+            QMessageBox.critical(
+                self,
+                "Load Error",
+                f"Could not load NetCDF network:\n{e}",
+            )
+
+    def on_open_csv_folder(self) -> None:
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Open PyPSA CSV Folder",
+            "",
+        )
+
+        if not folder_path:
+            self.log("Open CSV folder cancelled.")
+            return
+
+        self.log(f"Loading CSV network from folder: {folder_path}")
+
+        try:
+            network = pypsa.Network()
+            network.import_from_csv_folder(folder_path)
+            self._set_network(network)
+        except Exception as e:
+            self.log(f"Error loading CSV folder: {e}")
+            QMessageBox.critical(
+                self,
+                "Load Error",
+                f"Could not load CSV network:\n{e}",
+            )
 
     def on_save_network(self) -> None:
         self.log("Save clicked.")
@@ -179,4 +238,3 @@ class MainWindow(QMainWindow):
             "An experimental desktop GUI for inspecting, editing, "
             "solving, and visualising PyPSA networks.",
         )
-        
