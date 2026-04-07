@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
                 "Plots",
             ]
         )
+        self.navigation_list.setCurrentRow(0)
         self.navigation_list.currentTextChanged.connect(self.on_navigation_changed)
 
         dock = QDockWidget("Navigation", self)
@@ -136,42 +137,22 @@ class MainWindow(QMainWindow):
 
     def on_open_network(self) -> None:
         self.log("Open Network clicked.")
-        self.central_panel.show_message(
-            "Open Network",
-            "Next step: connect this action to a file dialog and PyPSA loader.",
-        )
 
     def on_save_network(self) -> None:
         self.log("Save clicked.")
-        self.central_panel.show_message(
-            "Save Network",
-            "Next step: connect this action to saving the working network.",
-        )
 
     def on_run_optimisation(self) -> None:
         self.log("Run Optimisation clicked.")
-        self.central_panel.show_message(
-            "Run Optimisation",
-            "Next step: connect this to the PyPSA optimisation workflow.",
-        )
 
     def on_run_power_flow(self) -> None:
         self.log("Run Power Flow clicked.")
-        self.central_panel.show_message(
-            "Run Power Flow",
-            "Next step: connect this to the PyPSA power flow workflow.",
-        )
 
     def on_navigation_changed(self, item_text: str) -> None:
         if not item_text:
             return
 
         self.log(f"Navigation changed to: {item_text}")
-        self.central_panel.show_message(
-            item_text,
-            "This is currently a placeholder view.\n"
-            "Later this will show the corresponding table or plot.",
-        )
+        self.central_panel.show_page(item_text)
 
     def on_about(self) -> None:
         QMessageBox.about(
