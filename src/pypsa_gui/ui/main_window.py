@@ -4,15 +4,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
-    QLabel,
     QListWidget,
     QMainWindow,
     QMessageBox,
     QTextEdit,
     QToolBar,
-    QVBoxLayout,
-    QWidget,
 )
+
+from pypsa_gui.ui.widgets.central_panel import CentralPanel
 
 
 class MainWindow(QMainWindow):
@@ -83,26 +82,8 @@ class MainWindow(QMainWindow):
         tool_bar.addAction(self.run_power_flow_action)
 
     def _create_central_widget(self) -> None:
-        central_widget = QWidget(self)
-        layout = QVBoxLayout(central_widget)
-
-        self.title_label = QLabel("pypsa-gui", self)
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setStyleSheet("font-size: 22px; font-weight: bold;")
-
-        self.content_label = QLabel(
-            "No network loaded yet.\n\n"
-            "Use File → Open Network... to begin.\n"
-            "Later this area will host tables, plots, and results.",
-            self,
-        )
-        self.content_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.content_label.setStyleSheet("font-size: 14px; padding: 24px;")
-
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.content_label, stretch=1)
-
-        self.setCentralWidget(central_widget)
+        self.central_panel = CentralPanel(self)
+        self.setCentralWidget(self.central_panel)
 
     def _create_navigation_dock(self) -> None:
         self.navigation_list = QListWidget(self)
@@ -155,30 +136,30 @@ class MainWindow(QMainWindow):
 
     def on_open_network(self) -> None:
         self.log("Open Network clicked.")
-        self.content_label.setText(
-            "Open Network clicked.\n\n"
-            "Next step: connect this action to a file dialog and PyPSA loader."
+        self.central_panel.show_message(
+            "Open Network",
+            "Next step: connect this action to a file dialog and PyPSA loader.",
         )
 
     def on_save_network(self) -> None:
         self.log("Save clicked.")
-        self.content_label.setText(
-            "Save clicked.\n\n"
-            "Next step: connect this action to saving the working network."
+        self.central_panel.show_message(
+            "Save Network",
+            "Next step: connect this action to saving the working network.",
         )
 
     def on_run_optimisation(self) -> None:
         self.log("Run Optimisation clicked.")
-        self.content_label.setText(
-            "Run Optimisation clicked.\n\n"
-            "Next step: connect this to the PyPSA optimisation workflow."
+        self.central_panel.show_message(
+            "Run Optimisation",
+            "Next step: connect this to the PyPSA optimisation workflow.",
         )
 
     def on_run_power_flow(self) -> None:
         self.log("Run Power Flow clicked.")
-        self.content_label.setText(
-            "Run Power Flow clicked.\n\n"
-            "Next step: connect this to the PyPSA power flow workflow."
+        self.central_panel.show_message(
+            "Run Power Flow",
+            "Next step: connect this to the PyPSA power flow workflow.",
         )
 
     def on_navigation_changed(self, item_text: str) -> None:
@@ -186,10 +167,10 @@ class MainWindow(QMainWindow):
             return
 
         self.log(f"Navigation changed to: {item_text}")
-        self.content_label.setText(
-            f"{item_text}\n\n"
+        self.central_panel.show_message(
+            item_text,
             "This is currently a placeholder view.\n"
-            "Later this will show the corresponding table or plot."
+            "Later this will show the corresponding table or plot.",
         )
 
     def on_about(self) -> None:
