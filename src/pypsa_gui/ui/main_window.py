@@ -11,7 +11,12 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-from pypsa_gui.ui.widgets.central_panel import CentralPanel
+from pypsa_gui.ui.central_panel import CentralPanel
+
+import pypsa
+
+print("DEBUG CentralPanel imported from:", CentralPanel.__module__)
+print("DEBUG CentralPanel file:", __import__(CentralPanel.__module__, fromlist=["*"]).__file__)
 
 
 class MainWindow(QMainWindow):
@@ -136,7 +141,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message, 3000)
 
     def on_open_network(self) -> None:
-        self.log("Open Network clicked.")
+        self.log("Loading demo PyPSA network...")
+
+        try:
+            network = pypsa.examples.ac_dc_meshed()  # built-in example
+            self.network = network
+
+            self.log("Network loaded successfully.")
+
+            # pass to central panel
+            self.central_panel.set_network(network)
+
+        except Exception as e:
+            self.log(f"Error loading network: {e}")
 
     def on_save_network(self) -> None:
         self.log("Save clicked.")
@@ -162,3 +179,4 @@ class MainWindow(QMainWindow):
             "An experimental desktop GUI for inspecting, editing, "
             "solving, and visualising PyPSA networks.",
         )
+        
