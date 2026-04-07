@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from pypsa_gui.ui.pages.buses_page import BusesPage
-
+from pypsa_gui.ui.pages.overview_page import OverviewPage
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -32,7 +32,7 @@ class CentralPanel(QWidget):
         self.stack.addWidget(widget)
 
     def _create_pages(self) -> None:
-        self._add_page("Overview", PlaceholderPage("Overview"))
+        self._add_page("Overview", OverviewPage())
         self._add_page("Buses", BusesPage())
         self._add_page("Generators", PlaceholderPage("Generators"))
         self._add_page("Loads", PlaceholderPage("Loads"))
