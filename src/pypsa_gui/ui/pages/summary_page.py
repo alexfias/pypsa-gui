@@ -3,6 +3,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
 
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
 
 class SummaryCard(QWidget):
     def __init__(self, title: str, value: str = "-", parent: QWidget | None = None) -> None:
@@ -34,6 +37,8 @@ class SummaryPage(QWidget):
         self.links_card = SummaryCard("Links")
         self.stores_card = SummaryCard("Stores")
         self.storage_units_card = SummaryCard("Storage Units")
+        self.figure = Figure(figsize=(4, 3))
+        self.canvas = FigureCanvas(self.figure)
 
         grid = QGridLayout()
         grid.addWidget(self.snapshots_card, 0, 0)
@@ -45,9 +50,15 @@ class SummaryPage(QWidget):
         grid.addWidget(self.stores_card, 2, 0)
         grid.addWidget(self.storage_units_card, 2, 1)
 
+
         layout = QVBoxLayout(self)
         layout.addLayout(grid)
+        layout.addWidget(self.canvas)
         layout.addStretch()
+
+
+
+
 
     def update_summary(self, network) -> None:
         if network is None:
@@ -69,3 +80,25 @@ class SummaryPage(QWidget):
         self.links_card.set_value(str(len(network.links)))
         self.stores_card.set_value(str(len(network.stores)))
         self.storage_units_card.set_value(str(len(network.storage_units)))
+        self._plot_system_cost(network)
+
+    def _plot_system_cost(self, network) -> None:
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+
+        if hasattr(network, "objective") and network.objective is not None:
+            cost = network.objective
+            ax.bar(["System Cost"], [cost])
+            ax.set_ylabel("Cost")
+            ax.set_title("Total System Cost")
+        else:
+            ax.text(0.5, 0.5, "No optimisation results",
+                    ha="center", va="center")
+
+        self.canvas.draw()
+
+    def _clear_plot(self) -> None:
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        self.canvas.draw()
