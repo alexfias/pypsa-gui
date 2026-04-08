@@ -16,6 +16,11 @@ from PySide6.QtWidgets import (
 
 import pypsa
 
+from pypsa_gui.services.network_io import (
+    load_network_from_csv_folder,
+    load_network_from_netcdf,
+    save_network_to_netcdf,
+)
 from pypsa_gui.ui.central_panel import CentralPanel
 
 
@@ -179,15 +184,15 @@ class MainWindow(QMainWindow):
         self.log(f"Loading NetCDF network: {file_path}")
 
         try:
-            network = pypsa.Network(file_path)
+            network = load_network_from_netcdf(file_path)
             self.current_file_path = file_path
             self._set_network(network)
-        except Exception as e:
-            self.log(f"Error loading NetCDF network: {e}")
+        except Exception as exc:
+            self.log(f"Error loading NetCDF network: {exc}")
             QMessageBox.critical(
                 self,
                 "Load Error",
-                f"Could not load NetCDF network:\n{e}",
+                f"Could not load NetCDF network:\n{exc}",
             )
 
     def on_open_csv_folder(self) -> None:
@@ -204,16 +209,15 @@ class MainWindow(QMainWindow):
         self.log(f"Loading CSV network from folder: {folder_path}")
 
         try:
-            network = pypsa.Network()
-            network.import_from_csv_folder(folder_path)
+            network = load_network_from_csv_folder(folder_path)
             self.current_file_path = None
             self._set_network(network)
-        except Exception as e:
-            self.log(f"Error loading CSV folder: {e}")
+        except Exception as exc:
+            self.log(f"Error loading CSV folder: {exc}")
             QMessageBox.critical(
                 self,
                 "Load Error",
-                f"Could not load CSV network:\n{e}",
+                f"Could not load CSV network:\n{exc}",
             )
 
     def save_as_netcdf(self) -> None:
@@ -242,7 +246,7 @@ class MainWindow(QMainWindow):
             file_path += ".nc"
 
         try:
-            self.network.export_to_netcdf(file_path)
+            save_network_to_netcdf(self.network, file_path)
             self.current_file_path = file_path
             self.setWindowTitle(f"pypsa-gui - {Path(file_path).name}")
             self.log(f"Network saved to: {file_path}")

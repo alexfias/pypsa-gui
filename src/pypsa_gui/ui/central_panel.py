@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 from pypsa_gui.ui.pages.buses_page import BusesPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
 
+
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
         super().__init__()

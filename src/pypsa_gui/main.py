@@ -6,7 +6,7 @@ import pypsa
 
 
 from pypsa_gui.ui.main_window import MainWindow
-from pypsa_gui.services.network_loader import (
+from pypsa_gui.services.network_io import (
     load_network_from_netcdf,
     load_network_from_csv_folder,
 )
