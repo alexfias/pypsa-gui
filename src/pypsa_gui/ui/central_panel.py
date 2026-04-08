@@ -55,5 +55,6 @@ class CentralPanel(QWidget):
         self.network = network
 
         for page in self.pages.values():
-            if hasattr(page, "set_network"):
-                page.set_network(network)
+            set_network = getattr(page, "set_network", None)
+            if callable(set_network):
+                set_network(network)
