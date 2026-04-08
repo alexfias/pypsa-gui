@@ -75,7 +75,7 @@ class BusesTableModel(QAbstractTableModel):
             if column in {"v_nom", "x", "y"}:
                 parsed_value = float(value)
             else:
-                parsed_value = str(value)
+                parsed_value = str(value).strip()
         except ValueError:
             return False
 
@@ -100,17 +100,11 @@ class BusesPage(QWidget):
 
         self.network = None
 
-        demo_rows = [
-            {"name": "Bus 1", "carrier": "AC", "unit": "MW", "v_nom": 220, "x": 10.5, "y": 50.1},
-            {"name": "Bus 2", "carrier": "AC", "unit": "MW", "v_nom": 220, "x": 11.2, "y": 51.0},
-            {"name": "Bus 3", "carrier": "DC", "unit": "MW", "v_nom": 320, "x": 12.7, "y": 49.8},
-        ]
-
-        self.model = BusesTableModel(demo_rows)
+        self.model = BusesTableModel()
         self.table = QTableView()
         self.table.setModel(self.model)
 
-        self.table.setSortingEnabled(True)
+        self.table.setSortingEnabled(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
@@ -119,9 +113,8 @@ class BusesPage(QWidget):
         horizontal_header = self.table.horizontalHeader()
         horizontal_header.setSectionResizeMode(QHeaderView.Stretch)
 
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         layout.addWidget(self.table)
-        self.setLayout(layout)
 
     def set_network(self, network) -> None:
         self.network = network
@@ -129,6 +122,7 @@ class BusesPage(QWidget):
 
     def refresh(self) -> None:
         if self.network is None:
+            self.model.set_rows([], None)
             return
 
         buses = self.network.buses.reset_index()

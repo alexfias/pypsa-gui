@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -12,12 +14,9 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-from pypsa_gui.ui.central_panel import CentralPanel
-
 import pypsa
 
-print("DEBUG CentralPanel imported from:", CentralPanel.__module__)
-print("DEBUG CentralPanel file:", __import__(CentralPanel.__module__, fromlist=["*"]).__file__)
+from pypsa_gui.ui.central_panel import CentralPanel
 
 
 class MainWindow(QMainWindow):
@@ -25,6 +24,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.network: pypsa.Network | None = None
+        self.current_file_path: str | None = None
 
         self.setWindowTitle("pypsa-gui")
         self.resize(1200, 800)
@@ -46,9 +46,9 @@ class MainWindow(QMainWindow):
         self.open_csv_action.setStatusTip("Open a PyPSA network from a CSV folder")
         self.open_csv_action.triggered.connect(self.on_open_csv_folder)
 
-        self.save_action = QAction("Save", self)
-        self.save_action.setStatusTip("Save the current network")
-        self.save_action.triggered.connect(self.on_save_network)
+        self.save_action = QAction("Save As NetCDF...", self)
+        self.save_action.setStatusTip("Save the current network as a .nc file")
+        self.save_action.triggered.connect(self.save_as_netcdf)
 
         self.exit_action = QAction("Exit", self)
         self.exit_action.setStatusTip("Close the application")
@@ -180,6 +180,7 @@ class MainWindow(QMainWindow):
 
         try:
             network = pypsa.Network(file_path)
+            self.current_file_path = file_path
             self._set_network(network)
         except Exception as e:
             self.log(f"Error loading NetCDF network: {e}")
@@ -205,6 +206,7 @@ class MainWindow(QMainWindow):
         try:
             network = pypsa.Network()
             network.import_from_csv_folder(folder_path)
+            self.current_file_path = None
             self._set_network(network)
         except Exception as e:
             self.log(f"Error loading CSV folder: {e}")
@@ -214,8 +216,43 @@ class MainWindow(QMainWindow):
                 f"Could not load CSV network:\n{e}",
             )
 
-    def on_save_network(self) -> None:
-        self.log("Save clicked.")
+    def save_as_netcdf(self) -> None:
+        if self.network is None:
+            QMessageBox.information(
+                self,
+                "No Network Loaded",
+                "There is no network loaded to save.",
+            )
+            return
+
+        suggested_path = self.current_file_path or str(Path.home() / "network.nc")
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save PyPSA Network As NetCDF",
+            suggested_path,
+            "NetCDF Files (*.nc)",
+        )
+
+        if not file_path:
+            self.log("Save cancelled.")
+            return
+
+        if not file_path.endswith(".nc"):
+            file_path += ".nc"
+
+        try:
+            self.network.export_to_netcdf(file_path)
+            self.current_file_path = file_path
+            self.setWindowTitle(f"pypsa-gui - {Path(file_path).name}")
+            self.log(f"Network saved to: {file_path}")
+        except Exception as exc:
+            self.log(f"Error saving network: {exc}")
+            QMessageBox.critical(
+                self,
+                "Save Failed",
+                f"Could not save network:\n\n{exc}",
+            )
 
     def on_run_optimisation(self) -> None:
         self.log("Run Optimisation clicked.")
