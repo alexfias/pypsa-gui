@@ -182,8 +182,8 @@ class MainWindow(QMainWindow):
             return
 
         self.log(f"Navigation changed to: {page_name}")
-        self.central_panel.show_page(page_name)
-
+        self.central_panel.set_current_page(page_name)
+        
     def _create_log_dock(self) -> None:
         self.log_output = QTextEdit(self)
         self.log_output.setReadOnly(True)
@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
 
     def _set_network(self, network: pypsa.Network) -> None:
         self.network = network
-        self.central_panel.set_network(network)
+        self.central_panel.update_network_dependent_pages(self.network)
 
         self.log("Network loaded successfully.")
         self.log(
