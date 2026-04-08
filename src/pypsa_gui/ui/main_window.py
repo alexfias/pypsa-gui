@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QTextEdit,
     QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
 )
 
 import pypsa
@@ -106,27 +108,34 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_panel)
 
     def _create_navigation_dock(self) -> None:
-        self.navigation_list = QListWidget(self)
-        self.navigation_list.addItems(
-            [
-                "Overview",
-                "Buses",
-                "Generators",
-                "Loads",
-                "Lines",
-                "Links",
-                "Stores",
-                "Storage Units",
-                "Global Constraints",
-                "Results",
-                "Plots",
-            ]
-        )
-        self.navigation_list.setCurrentRow(0)
-        self.navigation_list.currentTextChanged.connect(self.on_navigation_changed)
+        self.navigation_tree = QTreeWidget(self)
+        self.navigation_tree.setHeaderHidden(True)
+
+        overview_item = QTreeWidgetItem(["Overview"])
+
+        components_item = QTreeWidgetItem(["Components"])
+        QTreeWidgetItem(components_item, ["Buses"])
+        QTreeWidgetItem(components_item, ["Generators"])
+        QTreeWidgetItem(components_item, ["Loads"])
+        QTreeWidgetItem(components_item, ["Lines"])
+        QTreeWidgetItem(components_item, ["Links"])
+        QTreeWidgetItem(components_item, ["Stores"])
+        QTreeWidgetItem(components_item, ["Storage Units"])
+        QTreeWidgetItem(components_item, ["Global Constraints"])
+
+        analysis_item = QTreeWidgetItem(["Analysis"])
+        QTreeWidgetItem(analysis_item, ["Results"])
+        QTreeWidgetItem(analysis_item, ["Plots"])
+
+        self.navigation_tree.addTopLevelItem(overview_item)
+        self.navigation_tree.addTopLevelItem(components_item)
+        self.navigation_tree.addTopLevelItem(analysis_item)
+
+        self.navigation_tree.expandAll()
+        self.navigation_tree.itemClicked.connect(self.on_navigation_item_clicked)
 
         dock = QDockWidget("Navigation", self)
-        dock.setWidget(self.navigation_list)
+        dock.setWidget(self.navigation_tree)
         dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea
             | Qt.DockWidgetArea.RightDockWidgetArea
@@ -134,6 +143,16 @@ class MainWindow(QMainWindow):
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
+    def on_navigation_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        page_name = item.text(0)
+
+        if item.childCount() > 0:
+            self.log(f"Navigation category selected: {page_name}")
+            return
+
+        self.log(f"Navigation changed to: {page_name}")
+        self.central_panel.show_page(page_name)
+        
     def _create_log_dock(self) -> None:
         self.log_output = QTextEdit(self)
         self.log_output.setReadOnly(True)
