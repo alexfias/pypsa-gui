@@ -1,50 +1,41 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
 import pypsa
 
+
 def run_network_optimisation(network: pypsa.Network):
-    status = network.optimize(
+    network.optimize.create_model()
+    return network.optimize.solve_model(
         solver_name="gurobi",
         Method=2,
         Crossover=0,
     )
-    return status
 
 
 class OptimisationRunner:
-    def __init__(self, network):
+    def __init__(self, network: pypsa.Network) -> None:
         self.network = network
-        self._terminated = False
 
     def run(self):
-        return self.network.optimize(
-            solver_name="gurobi",
-            Method=2,
-            Crossover=0,
-        )
+        return run_network_optimisation(self.network)
 
-    def terminate(self):
-        if hasattr(self.network, "model") and self.network.model is not None:
-            try:
-                self.network.model.solver_model.terminate()
-            except Exception:
-                pass
+    def cancel(self) -> tuple[bool, str]:
+        model = getattr(self.network, "model", None)
+        if model is None:
+            return False, "network.model is None"
 
+        print("model type:", type(model))
+        print("model dir:", dir(model))
 
-class OptimisationWorker(QThread):
-    finished = Signal(object)
-    failed = Signal(str)
+        solver_model = getattr(model, "solver_model", None)
+        print("solver_model:", solver_model)
 
-    def __init__(self, runner):
-        super().__init__()
-        self.runner = runner
+        if solver_model is None:
+            return False, "network.model.solver_model is None"
 
-    def run(self):
-        try:
-            result = self.runner.run()
-            self.finished.emit(result)
-        except Exception as e:
-            self.failed.emit(str(e))
+        terminate = getattr(solver_model, "terminate", None)
+        if terminate is None:
+            return False, "solver_model has no terminate() method"
+
+        terminate()
+        return True, "Cancellation requested."

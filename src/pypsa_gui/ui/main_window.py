@@ -7,7 +7,6 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QTextEdit,
@@ -23,9 +22,9 @@ from pypsa_gui.services.network_io import (
     load_network_from_netcdf,
     save_network_to_netcdf,
 )
-from pypsa_gui.services.optimisation import run_network_optimisation
+from pypsa_gui.services.optimisation import OptimisationRunner
 from pypsa_gui.ui.central_panel import CentralPanel
-
+from pypsa_gui.workers.optimisation_worker import OptimisationWorker
 
 
 class MainWindow(QMainWindow):
@@ -34,6 +33,10 @@ class MainWindow(QMainWindow):
 
         self.network: pypsa.Network | None = None
         self.current_file_path: str | None = None
+
+        self.optimisation_runner: OptimisationRunner | None = None
+        self.optimisation_worker: OptimisationWorker | None = None
+        self.optimisation_running = False
 
         self.setWindowTitle("pypsa-gui")
         self.resize(1200, 800)
@@ -67,6 +70,15 @@ class MainWindow(QMainWindow):
         self.run_optimisation_action.setStatusTip("Run PyPSA optimisation")
         self.run_optimisation_action.triggered.connect(self.on_run_optimisation)
 
+        self.cancel_optimisation_action = QAction("Cancel Optimisation", self)
+        self.cancel_optimisation_action.setStatusTip(
+            "Cancel the running optimisation"
+        )
+        self.cancel_optimisation_action.triggered.connect(
+            self.on_cancel_optimisation
+        )
+        self.cancel_optimisation_action.setEnabled(False)
+
         self.run_power_flow_action = QAction("Run Power Flow", self)
         self.run_power_flow_action.setStatusTip("Run PyPSA power flow")
         self.run_power_flow_action.triggered.connect(self.on_run_power_flow)
@@ -88,6 +100,7 @@ class MainWindow(QMainWindow):
 
         run_menu = menu_bar.addMenu("Run")
         run_menu.addAction(self.run_optimisation_action)
+        run_menu.addAction(self.cancel_optimisation_action)
         run_menu.addAction(self.run_power_flow_action)
 
         help_menu = menu_bar.addMenu("Help")
@@ -103,6 +116,7 @@ class MainWindow(QMainWindow):
         tool_bar.addAction(self.save_action)
         tool_bar.addSeparator()
         tool_bar.addAction(self.run_optimisation_action)
+        tool_bar.addAction(self.cancel_optimisation_action)
         tool_bar.addAction(self.run_power_flow_action)
 
     def _create_central_widget(self) -> None:
@@ -154,7 +168,7 @@ class MainWindow(QMainWindow):
 
         self.log(f"Navigation changed to: {page_name}")
         self.central_panel.show_page(page_name)
-        
+
     def _create_log_dock(self) -> None:
         self.log_output = QTextEdit(self)
         self.log_output.setReadOnly(True)
@@ -175,6 +189,12 @@ class MainWindow(QMainWindow):
     def log(self, message: str) -> None:
         self.log_output.append(message)
         self.statusBar().showMessage(message, 3000)
+
+    def _set_optimisation_running_state(self, is_running: bool) -> None:
+        self.optimisation_running = is_running
+        self.run_optimisation_action.setEnabled(not is_running)
+        self.cancel_optimisation_action.setEnabled(is_running)
+        self.run_power_flow_action.setEnabled(not is_running)
 
     def _set_network(self, network: pypsa.Network) -> None:
         self.network = network
@@ -292,30 +312,64 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if self.optimisation_running:
+            self.log("Optimisation is already running.")
+            return
+
         self.log("Starting optimisation...")
 
-        try:
-            status = run_network_optimisation(
-                self.network
-            )
+        self.optimisation_runner = OptimisationRunner(self.network)
+        self.optimisation_worker = OptimisationWorker(self.optimisation_runner)
 
-            self.log(f"Optimisation finished. Status: {status}")
+        self.optimisation_worker.finished_successfully.connect(
+            self._on_optimisation_finished
+        )
+        self.optimisation_worker.failed.connect(self._on_optimisation_failed)
+        self.optimisation_worker.finished.connect(
+            self._on_optimisation_thread_finished
+        )
 
+        self._set_optimisation_running_state(True)
+        self.optimisation_worker.start()
+
+    def on_cancel_optimisation(self) -> None:
+        if not self.optimisation_running or self.optimisation_runner is None:
+            self.log("No optimisation is currently running.")
+            return
+
+        was_cancel_signal_sent, message = self.optimisation_runner.cancel()
+
+        if was_cancel_signal_sent:
+            self.log(message)
+            self.statusBar().showMessage("Cancelling optimisation...", 3000)
+        else:
+            self.log(f"Could not cancel optimisation: {message}")
+            self.statusBar().showMessage("Cancellation not available.", 3000)
+
+    def _on_optimisation_finished(self, status) -> None:
+        self.log(f"Optimisation finished. Status: {status}")
+        if self.network is not None:
             self.central_panel.set_network(self.network)
 
-            QMessageBox.information(
-                self,
-                "Optimisation Finished",
-                f"Optimisation completed successfully.\n\nStatus: {status}",
-            )
+        QMessageBox.information(
+            self,
+            "Optimisation Finished",
+            f"Optimisation completed.\n\nStatus: {status}",
+        )
 
-        except Exception as exc:
-            self.log(f"Optimisation failed: {exc}")
-            QMessageBox.critical(
-                self,
-                "Optimisation Failed",
-                f"Could not run optimisation:\n\n{exc}",
-            )
+    def _on_optimisation_failed(self, error_message: str) -> None:
+        self.log(f"Optimisation failed: {error_message}")
+
+        QMessageBox.critical(
+            self,
+            "Optimisation Failed",
+            f"Could not run optimisation:\n\n{error_message}",
+        )
+
+    def _on_optimisation_thread_finished(self) -> None:
+        self._set_optimisation_running_state(False)
+        self.optimisation_worker = None
+        self.optimisation_runner = None
 
     def on_run_power_flow(self) -> None:
         self.log("Run Power Flow clicked.")
@@ -335,3 +389,27 @@ class MainWindow(QMainWindow):
             "An experimental desktop GUI for inspecting, editing, "
             "solving, and visualising PyPSA networks.",
         )
+
+    def closeEvent(self, event) -> None:
+        worker_running = (
+                hasattr(self, "optimisation_worker")
+                and self.optimisation_worker is not None
+                and self.optimisation_worker.isRunning()
+        )
+
+        if not worker_running:
+            event.accept()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Optimisation running",
+            "An optimisation is still running. Close the application anyway?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
