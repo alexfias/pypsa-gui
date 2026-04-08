@@ -23,7 +23,9 @@ from pypsa_gui.services.network_io import (
     load_network_from_netcdf,
     save_network_to_netcdf,
 )
+from pypsa_gui.services.optimisation import run_network_optimisation
 from pypsa_gui.ui.central_panel import CentralPanel
+
 
 
 class MainWindow(QMainWindow):
@@ -187,6 +189,10 @@ class MainWindow(QMainWindow):
             f"{len(network.lines)} lines, "
             f"{len(network.links)} links"
         )
+        if self.current_file_path is not None:
+            self.setWindowTitle(f"pypsa-gui - {Path(self.current_file_path).name}")
+        else:
+            self.setWindowTitle("pypsa-gui - unsaved network")
 
     def on_open_netcdf_network(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -278,7 +284,38 @@ class MainWindow(QMainWindow):
             )
 
     def on_run_optimisation(self) -> None:
-        self.log("Run Optimisation clicked.")
+        if self.network is None:
+            QMessageBox.information(
+                self,
+                "No Network Loaded",
+                "Please load a network before running optimisation.",
+            )
+            return
+
+        self.log("Starting optimisation...")
+
+        try:
+            status = run_network_optimisation(
+                self.network
+            )
+
+            self.log(f"Optimisation finished. Status: {status}")
+
+            self.central_panel.set_network(self.network)
+
+            QMessageBox.information(
+                self,
+                "Optimisation Finished",
+                f"Optimisation completed successfully.\n\nStatus: {status}",
+            )
+
+        except Exception as exc:
+            self.log(f"Optimisation failed: {exc}")
+            QMessageBox.critical(
+                self,
+                "Optimisation Failed",
+                f"Could not run optimisation:\n\n{exc}",
+            )
 
     def on_run_power_flow(self) -> None:
         self.log("Run Power Flow clicked.")
