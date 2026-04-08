@@ -140,12 +140,27 @@ class MainWindow(QMainWindow):
         QTreeWidgetItem(components_item, ["Global Constraints"])
 
         analysis_item = QTreeWidgetItem(["Analysis"])
-        QTreeWidgetItem(analysis_item, ["Results"])
-        QTreeWidgetItem(analysis_item, ["Plots"])
+        QTreeWidgetItem(analysis_item, ["Summary"])
+        QTreeWidgetItem(analysis_item, ["Prices"])
+        QTreeWidgetItem(analysis_item, ["Congestion"])
+        QTreeWidgetItem(analysis_item, ["Storage"])
+        QTreeWidgetItem(analysis_item, ["Emissions"])
+
+        plots_item = QTreeWidgetItem(["Plots"])
+        QTreeWidgetItem(plots_item, ["Network Map"])
+        QTreeWidgetItem(plots_item, ["Time Series"])
+        QTreeWidgetItem(plots_item, ["Capacities"])
+
+        run_item = QTreeWidgetItem(["Run"])
+        QTreeWidgetItem(run_item, ["Power Flow"])
+        QTreeWidgetItem(run_item, ["Optimisation"])
+        QTreeWidgetItem(run_item, ["Solver Settings"])
 
         self.navigation_tree.addTopLevelItem(overview_item)
         self.navigation_tree.addTopLevelItem(components_item)
         self.navigation_tree.addTopLevelItem(analysis_item)
+        self.navigation_tree.addTopLevelItem(plots_item)
+        self.navigation_tree.addTopLevelItem(run_item)
 
         self.navigation_tree.expandAll()
         self.navigation_tree.itemClicked.connect(self.on_navigation_item_clicked)
@@ -158,7 +173,7 @@ class MainWindow(QMainWindow):
         )
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-
+        
     def on_navigation_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         page_name = item.text(0)
 

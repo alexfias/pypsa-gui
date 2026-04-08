@@ -33,7 +33,8 @@ class CentralPanel(QWidget):
         self.stack.addWidget(widget)
 
     def _create_pages(self) -> None:
-        self._add_page("Overview", OverviewPage())
+        self._add_page("Overview", PlaceholderPage("Overview"))
+
         self._add_page("Buses", BusesPage())
         self._add_page("Generators", PlaceholderPage("Generators"))
         self._add_page("Loads", PlaceholderPage("Loads"))
@@ -42,10 +43,20 @@ class CentralPanel(QWidget):
         self._add_page("Stores", PlaceholderPage("Stores"))
         self._add_page("Storage Units", PlaceholderPage("Storage Units"))
         self._add_page("Global Constraints", PlaceholderPage("Global Constraints"))
-        self._add_page("Results", PlaceholderPage("Results"))
-        self._add_page("Plots", PlaceholderPage("Plots"))
 
-        self.show_page("Overview")
+        self._add_page("Summary", PlaceholderPage("Summary"))
+        self._add_page("Prices", PlaceholderPage("Prices"))
+        self._add_page("Congestion", PlaceholderPage("Congestion"))
+        self._add_page("Storage", PlaceholderPage("Storage"))
+        self._add_page("Emissions", PlaceholderPage("Emissions"))
+
+        self._add_page("Network Map", PlaceholderPage("Network Map"))
+        self._add_page("Time Series", PlaceholderPage("Time Series"))
+        self._add_page("Capacities", PlaceholderPage("Capacities"))
+
+        self._add_page("Power Flow", PlaceholderPage("Power Flow"))
+        self._add_page("Optimisation", PlaceholderPage("Optimisation"))
+        self._add_page("Solver Settings", PlaceholderPage("Solver Settings"))
 
     def show_page(self, name: str) -> None:
         widget = self.pages.get(name)
