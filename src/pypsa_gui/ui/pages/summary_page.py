@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget, QScrollArea, QLayout
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 
@@ -29,6 +29,18 @@ class SummaryPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+
+        container = QWidget()
+        self.scroll.setWidget(container)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.addWidget(self.scroll)
+
+        layout = QVBoxLayout(container)
+        layout.setSizeConstraint(QLayout.SetMinAndMaxSize)
+
         self.snapshots_card = SummaryCard("Snapshots")
         self.buses_card = SummaryCard("Buses")
         self.generators_card = SummaryCard("Generators")
@@ -37,8 +49,6 @@ class SummaryPage(QWidget):
         self.links_card = SummaryCard("Links")
         self.stores_card = SummaryCard("Stores")
         self.storage_units_card = SummaryCard("Storage Units")
-        self.figure = Figure(figsize=(4, 3))
-        self.canvas = FigureCanvas(self.figure)
 
         grid = QGridLayout()
         grid.addWidget(self.snapshots_card, 0, 0)
@@ -50,26 +60,29 @@ class SummaryPage(QWidget):
         grid.addWidget(self.stores_card, 2, 0)
         grid.addWidget(self.storage_units_card, 2, 1)
 
-
-        layout = QVBoxLayout(self)
         layout.addLayout(grid)
-        layout.addWidget(self.canvas)
+
+        self.system_cost_figure = Figure(figsize=(6, 3))
+        self.system_cost_canvas = FigureCanvas(self.system_cost_figure)
+        self.system_cost_canvas.setMinimumHeight(300)
+
+        self.generation_figure = Figure(figsize=(6, 4))
+        self.generation_canvas = FigureCanvas(self.generation_figure)
+        self.generation_canvas.setMinimumHeight(350)
+
+        layout.addWidget(QLabel("System Cost"))
+        layout.addWidget(self.system_cost_canvas)
+
+        layout.addWidget(QLabel("Generation by Carrier"))
+        layout.addWidget(self.generation_canvas)
+
         layout.addStretch()
-
-
-
-
 
     def update_summary(self, network) -> None:
         if network is None:
-            self.snapshots_card.set_value("-")
-            self.buses_card.set_value("-")
-            self.generators_card.set_value("-")
-            self.loads_card.set_value("-")
-            self.lines_card.set_value("-")
-            self.links_card.set_value("-")
-            self.stores_card.set_value("-")
-            self.storage_units_card.set_value("-")
+            self._set_empty_cards()
+            self._clear_system_cost_plot()
+            self._clear_generation_plot()
             return
 
         self.snapshots_card.set_value(str(len(network.snapshots)))
@@ -80,25 +93,91 @@ class SummaryPage(QWidget):
         self.links_card.set_value(str(len(network.links)))
         self.stores_card.set_value(str(len(network.stores)))
         self.storage_units_card.set_value(str(len(network.storage_units)))
+
         self._plot_system_cost(network)
+        self._plot_generation_by_carrier(network)
+
+    def _set_empty_cards(self) -> None:
+        self.snapshots_card.set_value("-")
+        self.buses_card.set_value("-")
+        self.generators_card.set_value("-")
+        self.loads_card.set_value("-")
+        self.lines_card.set_value("-")
+        self.links_card.set_value("-")
+        self.stores_card.set_value("-")
+        self.storage_units_card.set_value("-")
 
     def _plot_system_cost(self, network) -> None:
-        self.figure.clear()
-        ax = self.figure.add_subplot(111)
+        self.system_cost_figure.clear()
+        ax = self.system_cost_figure.add_subplot(111)
 
-        if hasattr(network, "objective") and network.objective is not None:
-            cost = network.objective
-            ax.bar(["System Cost"], [cost])
+        objective = getattr(network, "objective", None)
+
+        if objective is None:
+            ax.text(0.5, 0.5, "No optimisation results", ha="center", va="center")
+            ax.set_xticks([])
+            ax.set_yticks([])
+        else:
+            ax.bar(["System Cost"], [objective])
             ax.set_ylabel("Cost")
             ax.set_title("Total System Cost")
-        else:
-            ax.text(0.5, 0.5, "No optimisation results",
-                    ha="center", va="center")
 
-        self.canvas.draw()
+        self.system_cost_figure.tight_layout()
+        self.system_cost_canvas.draw()
 
-    def _clear_plot(self) -> None:
-        self.figure.clear()
-        ax = self.figure.add_subplot(111)
+    def _clear_system_cost_plot(self) -> None:
+        self.system_cost_figure.clear()
+        ax = self.system_cost_figure.add_subplot(111)
         ax.text(0.5, 0.5, "No data", ha="center", va="center")
-        self.canvas.draw()
+        ax.set_xticks([])
+        ax.set_yticks([])
+        self.system_cost_figure.tight_layout()
+        self.system_cost_canvas.draw()
+
+    def _plot_generation_by_carrier(self, network) -> None:
+        self.generation_figure.clear()
+        ax = self.generation_figure.add_subplot(111)
+
+        generators = getattr(network, "generators", None)
+        generators_t = getattr(network, "generators_t", None)
+
+        if (
+            generators is None
+            or generators.empty
+            or generators_t is None
+            or not hasattr(generators_t, "p")
+            or generators_t.p.empty
+        ):
+            ax.text(0.5, 0.5, "No generator dispatch data", ha="center", va="center")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            self.generation_figure.tight_layout()
+            self.generation_canvas.draw()
+            return
+
+        dispatch = network.generators_t.p.sum(axis=0)
+        carrier_series = network.generators.loc[dispatch.index, "carrier"]
+        dispatch_by_carrier = dispatch.groupby(carrier_series).sum().sort_values(ascending=False)
+        dispatch_by_carrier = dispatch_by_carrier.sort_values(ascending=False)
+
+        if dispatch_by_carrier.empty:
+            ax.text(0.5, 0.5, "No generation data", ha="center", va="center")
+            ax.set_xticks([])
+            ax.set_yticks([])
+        else:
+            ax.bar(dispatch_by_carrier.index.astype(str), dispatch_by_carrier.values)
+            ax.set_title("Generation by Carrier")
+            ax.set_ylabel("Total Generation")
+            ax.tick_params(axis="x", rotation=45)
+
+        self.generation_figure.tight_layout()
+        self.generation_canvas.draw()
+
+    def _clear_generation_plot(self) -> None:
+        self.generation_figure.clear()
+        ax = self.generation_figure.add_subplot(111)
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        self.generation_figure.tight_layout()
+        self.generation_canvas.draw()
