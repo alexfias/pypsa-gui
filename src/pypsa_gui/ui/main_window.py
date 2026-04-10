@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -17,11 +18,13 @@ from PySide6.QtWidgets import (
 
 import pypsa
 
+from pypsa_gui.models.network_session import NetworkSession
 from pypsa_gui.services.network_io import (
     load_network_from_csv_folder,
     load_network_from_netcdf,
     save_network_to_netcdf,
 )
+from pypsa_gui.services.network_store import NetworkStore
 from pypsa_gui.services.optimisation import OptimisationRunner
 from pypsa_gui.ui.central_panel import CentralPanel
 from pypsa_gui.workers.optimisation_worker import OptimisationWorker
@@ -31,8 +34,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.network: pypsa.Network | None = None
-        self.current_file_path: str | None = None
+        self.network_store = NetworkStore()
 
         self.optimisation_runner: OptimisationRunner | None = None
         self.optimisation_worker: OptimisationWorker | None = None
@@ -48,6 +50,25 @@ class MainWindow(QMainWindow):
         self._create_navigation_dock()
         self._create_log_dock()
         self._show_welcome_message()
+
+    # ------------------------------------------------------------------
+    # Active session helpers
+    # ------------------------------------------------------------------
+
+    def active_session(self) -> NetworkSession | None:
+        return self.network_store.get_active_session()
+
+    def active_network(self) -> pypsa.Network | None:
+        session = self.active_session()
+        return session.network if session is not None else None
+
+    def active_file_path(self) -> Path | None:
+        session = self.active_session()
+        return session.source_path if session is not None else None
+
+    # ------------------------------------------------------------------
+    # UI setup
+    # ------------------------------------------------------------------
 
     def _create_actions(self) -> None:
         self.open_netcdf_action = QAction("Open NetCDF Network...", self)
@@ -173,7 +194,7 @@ class MainWindow(QMainWindow):
         )
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        
+
     def on_navigation_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         page_name = item.text(0)
 
@@ -183,7 +204,7 @@ class MainWindow(QMainWindow):
 
         self.log(f"Navigation changed to: {page_name}")
         self.central_panel.set_current_page(page_name)
-        
+
     def _create_log_dock(self) -> None:
         self.log_output = QTextEdit(self)
         self.log_output.setReadOnly(True)
@@ -201,6 +222,10 @@ class MainWindow(QMainWindow):
         self.log("Application started.")
         self.log("No network loaded.")
 
+    # ------------------------------------------------------------------
+    # Logging and UI state
+    # ------------------------------------------------------------------
+
     def log(self, message: str) -> None:
         self.log_output.append(message)
         self.statusBar().showMessage(message, 3000)
@@ -211,23 +236,58 @@ class MainWindow(QMainWindow):
         self.cancel_optimisation_action.setEnabled(is_running)
         self.run_power_flow_action.setEnabled(not is_running)
 
-    def _set_network(self, network: pypsa.Network) -> None:
-        self.network = network
-        self.central_panel.update_network_dependent_pages(self.network)
+    # ------------------------------------------------------------------
+    # Session and network handling
+    # ------------------------------------------------------------------
+
+    def _refresh_active_session_ui(self) -> None:
+        session = self.active_session()
+
+        if session is None:
+            self.setWindowTitle("pypsa-gui")
+            return
+
+        self.central_panel.update_network_dependent_pages(session.network)
 
         self.log("Network loaded successfully.")
         self.log(
             f"Network summary: "
-            f"{len(network.buses)} buses, "
-            f"{len(network.generators)} generators, "
-            f"{len(network.loads)} loads, "
-            f"{len(network.lines)} lines, "
-            f"{len(network.links)} links"
+            f"{len(session.network.buses)} buses, "
+            f"{len(session.network.generators)} generators, "
+            f"{len(session.network.loads)} loads, "
+            f"{len(session.network.lines)} lines, "
+            f"{len(session.network.links)} links"
         )
-        if self.current_file_path is not None:
-            self.setWindowTitle(f"pypsa-gui - {Path(self.current_file_path).name}")
+
+        if session.source_path is not None:
+            self.setWindowTitle(f"pypsa-gui - {session.source_path.name}")
         else:
-            self.setWindowTitle("pypsa-gui - unsaved network")
+            self.setWindowTitle(f"pypsa-gui - {session.name}")
+
+    def _add_network_session(
+        self,
+        network: pypsa.Network,
+        source_path: Path | None,
+        name: str | None = None,
+    ) -> None:
+        session_name = name or (
+            source_path.stem if source_path is not None else "unsaved network"
+        )
+
+        session = NetworkSession(
+            id=str(uuid4()),
+            name=session_name,
+            network=network,
+            source_path=source_path,
+            is_modified=False,
+        )
+
+        self.network_store.add_session(session)
+        self._refresh_active_session_ui()
+
+    # ------------------------------------------------------------------
+    # File loading and saving
+    # ------------------------------------------------------------------
 
     def on_open_netcdf_network(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -245,8 +305,10 @@ class MainWindow(QMainWindow):
 
         try:
             network = load_network_from_netcdf(file_path)
-            self.current_file_path = file_path
-            self._set_network(network)
+            self._add_network_session(
+                network=network,
+                source_path=Path(file_path),
+            )
         except Exception as exc:
             self.log(f"Error loading NetCDF network: {exc}")
             QMessageBox.critical(
@@ -270,8 +332,10 @@ class MainWindow(QMainWindow):
 
         try:
             network = load_network_from_csv_folder(folder_path)
-            self.current_file_path = None
-            self._set_network(network)
+            self._add_network_session(
+                network=network,
+                source_path=Path(folder_path),
+            )
         except Exception as exc:
             self.log(f"Error loading CSV folder: {exc}")
             QMessageBox.critical(
@@ -281,7 +345,9 @@ class MainWindow(QMainWindow):
             )
 
     def save_as_netcdf(self) -> None:
-        if self.network is None:
+        session = self.active_session()
+
+        if session is None:
             QMessageBox.information(
                 self,
                 "No Network Loaded",
@@ -289,12 +355,16 @@ class MainWindow(QMainWindow):
             )
             return
 
-        suggested_path = self.current_file_path or str(Path.home() / "network.nc")
+        default_path = (
+            str(session.source_path)
+            if session.source_path is not None and session.source_path.suffix == ".nc"
+            else str(Path.home() / f"{session.name}.nc")
+        )
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save PyPSA Network As NetCDF",
-            suggested_path,
+            default_path,
             "NetCDF Files (*.nc)",
         )
 
@@ -306,8 +376,10 @@ class MainWindow(QMainWindow):
             file_path += ".nc"
 
         try:
-            save_network_to_netcdf(self.network, file_path)
-            self.current_file_path = file_path
+            save_network_to_netcdf(session.network, file_path)
+            session.source_path = Path(file_path)
+            session.name = Path(file_path).stem
+            session.is_modified = False
             self.setWindowTitle(f"pypsa-gui - {Path(file_path).name}")
             self.log(f"Network saved to: {file_path}")
         except Exception as exc:
@@ -318,8 +390,14 @@ class MainWindow(QMainWindow):
                 f"Could not save network:\n\n{exc}",
             )
 
+    # ------------------------------------------------------------------
+    # Optimisation
+    # ------------------------------------------------------------------
+
     def on_run_optimisation(self) -> None:
-        if self.network is None:
+        session = self.active_session()
+
+        if session is None:
             QMessageBox.information(
                 self,
                 "No Network Loaded",
@@ -331,9 +409,9 @@ class MainWindow(QMainWindow):
             self.log("Optimisation is already running.")
             return
 
-        self.log("Starting optimisation...")
+        self.log(f"Starting optimisation for: {session.name}")
 
-        self.optimisation_runner = OptimisationRunner(self.network)
+        self.optimisation_runner = OptimisationRunner(session.network)
         self.optimisation_worker = OptimisationWorker(self.optimisation_runner)
 
         self.optimisation_worker.finished_successfully.connect(
@@ -362,9 +440,13 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Cancellation not available.", 3000)
 
     def _on_optimisation_finished(self, status) -> None:
+        session = self.active_session()
+
         self.log(f"Optimisation finished. Status: {status}")
-        if self.network is not None:
-            self.central_panel.set_network(self.network)
+
+        if session is not None:
+            session.is_modified = True
+            self.central_panel.set_network(session.network)
 
         QMessageBox.information(
             self,
@@ -385,6 +467,10 @@ class MainWindow(QMainWindow):
         self._set_optimisation_running_state(False)
         self.optimisation_worker = None
         self.optimisation_runner = None
+
+    # ------------------------------------------------------------------
+    # Other actions
+    # ------------------------------------------------------------------
 
     def on_run_power_flow(self) -> None:
         self.log("Run Power Flow clicked.")
@@ -407,9 +493,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         worker_running = (
-                hasattr(self, "optimisation_worker")
-                and self.optimisation_worker is not None
-                and self.optimisation_worker.isRunning()
+            hasattr(self, "optimisation_worker")
+            and self.optimisation_worker is not None
+            and self.optimisation_worker.isRunning()
         )
 
         if not worker_running:
