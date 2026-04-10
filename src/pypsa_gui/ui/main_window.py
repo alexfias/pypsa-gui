@@ -312,7 +312,7 @@ class MainWindow(QMainWindow):
 
         active_session = self.active_session()
 
-        for session in self.network_store.sessions:
+        for session in self.network_store.list_sessions():
             label = session.name
             if session is active_session:
                 label = f"● {label}"

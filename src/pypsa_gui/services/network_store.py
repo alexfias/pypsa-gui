@@ -40,3 +40,7 @@ class NetworkStore:
 
     def has_sessions(self) -> bool:
         return bool(self._sessions)
+
+    @property
+    def sessions(self) -> list[NetworkSession]:
+        return list(self._sessions.values())
