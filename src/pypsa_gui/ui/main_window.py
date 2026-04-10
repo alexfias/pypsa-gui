@@ -8,6 +8,8 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QTextEdit,
@@ -48,6 +50,7 @@ class MainWindow(QMainWindow):
         self._create_tool_bar()
         self._create_central_widget()
         self._create_navigation_dock()
+        self._create_loaded_networks_dock()
         self._create_log_dock()
         self._show_welcome_message()
 
@@ -195,6 +198,21 @@ class MainWindow(QMainWindow):
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
+    def _create_loaded_networks_dock(self) -> None:
+        self.loaded_networks_list = QListWidget(self)
+        self.loaded_networks_list.itemClicked.connect(
+            self.on_loaded_network_clicked
+        )
+
+        dock = QDockWidget("Loaded Networks", self)
+        dock.setWidget(self.loaded_networks_list)
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea
+            | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+
     def on_navigation_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         page_name = item.text(0)
 
@@ -245,6 +263,7 @@ class MainWindow(QMainWindow):
 
         if session is None:
             self.setWindowTitle("pypsa-gui")
+            self._refresh_loaded_networks_dock()
             return
 
         self.central_panel.update_network_dependent_pages(session.network)
@@ -263,6 +282,8 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"pypsa-gui - {session.source_path.name}")
         else:
             self.setWindowTitle(f"pypsa-gui - {session.name}")
+
+        self._refresh_loaded_networks_dock()
 
     def _add_network_session(
         self,
@@ -284,6 +305,46 @@ class MainWindow(QMainWindow):
 
         self.network_store.add_session(session)
         self._refresh_active_session_ui()
+
+    def _refresh_loaded_networks_dock(self) -> None:
+        self.loaded_networks_list.blockSignals(True)
+        self.loaded_networks_list.clear()
+
+        active_session = self.active_session()
+
+        for session in self.network_store.sessions:
+            label = session.name
+            if session is active_session:
+                label = f"● {label}"
+
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, session.id)
+            self.loaded_networks_list.addItem(item)
+
+        if active_session is not None:
+            for row in range(self.loaded_networks_list.count()):
+                item = self.loaded_networks_list.item(row)
+                if item.data(Qt.ItemDataRole.UserRole) == active_session.id:
+                    self.loaded_networks_list.setCurrentRow(row)
+                    break
+
+        self.loaded_networks_list.blockSignals(False)
+
+    def on_loaded_network_clicked(self, item: QListWidgetItem) -> None:
+        session_id = item.data(Qt.ItemDataRole.UserRole)
+        if session_id is None:
+            return
+
+        if self.optimisation_running:
+            self.log("Cannot switch sessions while optimisation is running.")
+            return
+
+        self.network_store.set_active_session(session_id)
+        self._refresh_active_session_ui()
+
+        session = self.active_session()
+        if session is not None:
+            self.log(f"Switched active session to: {session.name}")
 
     # ------------------------------------------------------------------
     # File loading and saving
@@ -381,6 +442,7 @@ class MainWindow(QMainWindow):
             session.name = Path(file_path).stem
             session.is_modified = False
             self.setWindowTitle(f"pypsa-gui - {Path(file_path).name}")
+            self._refresh_loaded_networks_dock()
             self.log(f"Network saved to: {file_path}")
         except Exception as exc:
             self.log(f"Error saving network: {exc}")
