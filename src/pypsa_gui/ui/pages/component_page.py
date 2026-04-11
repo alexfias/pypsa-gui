@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
-from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QHeaderView,
     QLineEdit,
+    QMenu,
+    QPushButton,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -216,6 +219,7 @@ class ComponentPage(QWidget):
         super().__init__(parent)
         self.component_name = component_name
         self.network = None
+        self._column_actions: dict[int, QAction] = {}
 
         self.model = ComponentTableModel(component_name=component_name)
 
@@ -226,6 +230,10 @@ class ComponentPage(QWidget):
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search table...")
         self.search_box.textChanged.connect(self.proxy_model.set_filter_text)
+
+        self.columns_button = QPushButton("Columns")
+        self.columns_menu = QMenu(self.columns_button)
+        self.columns_button.setMenu(self.columns_menu)
 
         self.table = QTableView()
         self.table.setModel(self.proxy_model)
@@ -252,8 +260,12 @@ class ComponentPage(QWidget):
         self.copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table)
         self.copy_shortcut.activated.connect(self.copy_selection_to_clipboard)
 
+        controls_layout = QHBoxLayout()
+        controls_layout.addWidget(self.search_box, stretch=1)
+        controls_layout.addWidget(self.columns_button)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(self.search_box)
+        layout.addLayout(controls_layout)
         layout.addWidget(self.table)
 
     def set_network(self, network) -> None:
@@ -263,11 +275,13 @@ class ComponentPage(QWidget):
     def refresh(self) -> None:
         if self.network is None:
             self.model.set_table_data([], [], set(), None)
+            self._rebuild_columns_menu([])
             return
 
         df = getattr(self.network, self.component_name, None)
         if df is None:
             self.model.set_table_data([], [], set(), None)
+            self._rebuild_columns_menu([])
             return
 
         df_reset = df.reset_index()
@@ -298,6 +312,7 @@ class ComponentPage(QWidget):
         if name_column_index >= 0:
             self.table.setColumnWidth(name_column_index, 180)
 
+        self._rebuild_columns_menu(columns)
         self.table.sortByColumn(0, Qt.AscendingOrder)
 
     def copy_selection_to_clipboard(self) -> None:
@@ -327,3 +342,17 @@ class ComponentPage(QWidget):
 
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
+
+    def _rebuild_columns_menu(self, columns: list[str]) -> None:
+        self.columns_menu.clear()
+        self._column_actions.clear()
+
+        for column_index, column_name in enumerate(columns):
+            action = QAction(column_name.replace("_", " ").title(), self)
+            action.setCheckable(True)
+            action.setChecked(not self.table.isColumnHidden(column_index))
+            action.toggled.connect(
+                lambda checked, col=column_index: self.table.setColumnHidden(col, not checked)
+            )
+            self.columns_menu.addAction(action)
+            self._column_actions[column_index] = action
