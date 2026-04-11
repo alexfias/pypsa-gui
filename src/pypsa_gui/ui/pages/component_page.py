@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import pandas as pd
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PySide6.QtWidgets import QHeaderView, QTableView, QVBoxLayout, QWidget
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtWidgets import (
+    QHeaderView,
+    QLineEdit,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class ComponentTableModel(QAbstractTableModel):
@@ -91,10 +97,9 @@ class ComponentTableModel(QAbstractTableModel):
                 return False
 
             if new_name in df.index:
-                return False  # avoid duplicates
+                return False
 
             df.rename(index={old_name: new_name}, inplace=True)
-
             self._rows[index.row()]["name"] = new_name
 
             self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
@@ -149,6 +154,32 @@ class ComponentTableModel(QAbstractTableModel):
         self.endResetModel()
 
 
+class ComponentFilterProxyModel(QSortFilterProxyModel):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._filter_text = ""
+
+    def set_filter_text(self, text: str) -> None:
+        self._filter_text = text.casefold().strip()
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        if not self._filter_text:
+            return True
+
+        model = self.sourceModel()
+        if model is None:
+            return True
+
+        for column in range(model.columnCount()):
+            index = model.index(source_row, column, source_parent)
+            value = model.data(index, Qt.DisplayRole)
+            if value is not None and self._filter_text in str(value).casefold():
+                return True
+
+        return False
+
+
 class ComponentPage(QWidget):
     def __init__(self, component_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -156,8 +187,16 @@ class ComponentPage(QWidget):
         self.network = None
 
         self.model = ComponentTableModel(component_name=component_name)
+
+        self.proxy_model = ComponentFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.model)
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search table...")
+        self.search_box.textChanged.connect(self.proxy_model.set_filter_text)
+
         self.table = QTableView()
-        self.table.setModel(self.model)
+        self.table.setModel(self.proxy_model)
 
         self.table.setSortingEnabled(False)
         self.table.setAlternatingRowColors(True)
@@ -179,6 +218,7 @@ class ComponentPage(QWidget):
         horizontal_header.setMaximumSectionSize(300)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.search_box)
         layout.addWidget(self.table)
 
     def set_network(self, network) -> None:
