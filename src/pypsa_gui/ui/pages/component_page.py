@@ -73,6 +73,33 @@ class ComponentTableModel(QAbstractTableModel):
         component_id = row["name"]
         old_value = row.get(column, "")
 
+        if column == "name":
+            new_name = str(value).strip()
+            if not new_name:
+                return False
+
+            old_name = row["name"]
+
+            if new_name == old_name:
+                return True
+
+            if self._network is None:
+                return False
+
+            df = getattr(self._network, self._component_name, None)
+            if df is None:
+                return False
+
+            if new_name in df.index:
+                return False  # avoid duplicates
+
+            df.rename(index={old_name: new_name}, inplace=True)
+
+            self._rows[index.row()]["name"] = new_name
+
+            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
+            return True
+
         try:
             parsed_value = self._parse_value(value, old_value)
         except ValueError:
@@ -185,7 +212,7 @@ class ComponentPage(QWidget):
             for _, row in df_reset.iterrows():
                 rows.append({column: row.get(column, "") for column in columns})
 
-        editable_columns = {col for col in columns if col != "name"}
+        editable_columns = set(columns)
 
         self.model.set_table_data(rows, columns, editable_columns, self.network)
 
