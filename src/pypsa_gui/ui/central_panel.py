@@ -3,8 +3,9 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from pypsa_gui.ui.pages.buses_page import BusesPage
-from pypsa_gui.ui.pages.summary_page import SummaryPage
+from pypsa_gui.ui.pages.component_page import ComponentPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
+from pypsa_gui.ui.pages.summary_page import SummaryPage
 
 
 class PlaceholderPage(QWidget):
@@ -35,14 +36,16 @@ class CentralPanel(QWidget):
     def _create_pages(self) -> None:
         self._add_page("Overview", OverviewPage())
         self._add_page("Summary", SummaryPage())
+
         self._add_page("Buses", BusesPage())
-        self._add_page("Generators", PlaceholderPage("Generators"))
-        self._add_page("Loads", PlaceholderPage("Loads"))
-        self._add_page("Lines", PlaceholderPage("Lines"))
-        self._add_page("Links", PlaceholderPage("Links"))
-        self._add_page("Stores", PlaceholderPage("Stores"))
-        self._add_page("Storage Units", PlaceholderPage("Storage Units"))
-        self._add_page("Global Constraints", PlaceholderPage("Global Constraints"))
+        self._add_page("Generators", ComponentPage("generators"))
+        self._add_page("Loads", ComponentPage("loads"))
+        self._add_page("Lines", ComponentPage("lines"))
+        self._add_page("Links", ComponentPage("links"))
+        self._add_page("Stores", ComponentPage("stores"))
+        self._add_page("Storage Units", ComponentPage("storage_units"))
+        self._add_page("Global Constraints", ComponentPage("global_constraints"))
+
         self._add_page("Prices", PlaceholderPage("Prices"))
         self._add_page("Congestion", PlaceholderPage("Congestion"))
         self._add_page("Storage", PlaceholderPage("Storage"))
