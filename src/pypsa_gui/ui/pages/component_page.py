@@ -36,7 +36,7 @@ class ComponentTableModel(QAbstractTableModel):
             return "" if value is None or pd.isna(value) else str(value)
 
         if role == Qt.TextAlignmentRole:
-            return Qt.AlignCenter
+            return Qt.AlignLeft | Qt.AlignVCenter
 
         return None
 
@@ -138,8 +138,18 @@ class ComponentPage(QWidget):
         self.table.setSelectionMode(QTableView.SingleSelection)
         self.table.setEditTriggers(QTableView.DoubleClicked | QTableView.EditKeyPressed)
 
+        self.table.setHorizontalScrollMode(QTableView.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QTableView.ScrollPerPixel)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.ElideRight)
+
+        self.table.verticalHeader().setDefaultSectionSize(24)
+
         horizontal_header = self.table.horizontalHeader()
-        horizontal_header.setSectionResizeMode(QHeaderView.Stretch)
+        horizontal_header.setSectionResizeMode(QHeaderView.Interactive)
+        horizontal_header.setStretchLastSection(False)
+        horizontal_header.setMinimumSectionSize(80)
+        horizontal_header.setMaximumSectionSize(300)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.table)
@@ -178,3 +188,10 @@ class ComponentPage(QWidget):
         editable_columns = {col for col in columns if col != "name"}
 
         self.model.set_table_data(rows, columns, editable_columns, self.network)
+
+        self.table.resizeColumnsToContents()
+        self.table.resizeRowsToContents()
+
+        name_column_index = columns.index("name") if "name" in columns else -1
+        if name_column_index >= 0:
+            self.table.setColumnWidth(name_column_index, 180)
