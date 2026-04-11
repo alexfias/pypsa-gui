@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHeaderView,
     QLineEdit,
@@ -231,8 +232,8 @@ class ComponentPage(QWidget):
 
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.setSelectionBehavior(QTableView.SelectItems)
+        self.table.setSelectionMode(QTableView.ExtendedSelection)
         self.table.setEditTriggers(QTableView.DoubleClicked | QTableView.EditKeyPressed)
 
         self.table.setHorizontalScrollMode(QTableView.ScrollPerPixel)
@@ -247,6 +248,9 @@ class ComponentPage(QWidget):
         horizontal_header.setStretchLastSection(False)
         horizontal_header.setMinimumSectionSize(80)
         horizontal_header.setMaximumSectionSize(300)
+
+        self.copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table)
+        self.copy_shortcut.activated.connect(self.copy_selection_to_clipboard)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.search_box)
@@ -295,3 +299,31 @@ class ComponentPage(QWidget):
             self.table.setColumnWidth(name_column_index, 180)
 
         self.table.sortByColumn(0, Qt.AscendingOrder)
+
+    def copy_selection_to_clipboard(self) -> None:
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return
+
+        indexes = selection_model.selectedIndexes()
+        if not indexes:
+            return
+
+        indexes = sorted(indexes, key=lambda idx: (idx.row(), idx.column()))
+
+        row_numbers = sorted({index.row() for index in indexes})
+        column_numbers = sorted({index.column() for index in indexes})
+
+        row_map = {row: i for i, row in enumerate(row_numbers)}
+        column_map = {column: i for i, column in enumerate(column_numbers)}
+
+        grid = [["" for _ in column_numbers] for _ in row_numbers]
+
+        for index in indexes:
+            value = self.table.model().data(index, Qt.DisplayRole)
+            grid[row_map[index.row()]][column_map[index.column()]] = "" if value is None else str(value)
+
+        text = "\n".join("\t".join(row) for row in grid)
+
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(text)
