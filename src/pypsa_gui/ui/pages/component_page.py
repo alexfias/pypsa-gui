@@ -41,6 +41,9 @@ class ComponentTableModel(QAbstractTableModel):
         if role in (Qt.DisplayRole, Qt.EditRole):
             return "" if value is None or pd.isna(value) else str(value)
 
+        if role == Qt.UserRole:
+            return value
+
         if role == Qt.TextAlignmentRole:
             return Qt.AlignLeft | Qt.AlignVCenter
 
@@ -102,7 +105,7 @@ class ComponentTableModel(QAbstractTableModel):
             df.rename(index={old_name: new_name}, inplace=True)
             self._rows[index.row()]["name"] = new_name
 
-            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
+            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole, Qt.UserRole])
             return True
 
         try:
@@ -117,7 +120,7 @@ class ComponentTableModel(QAbstractTableModel):
             if df is not None and component_id in df.index and column in df.columns:
                 df.at[component_id, column] = parsed_value
 
-        self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
+        self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole, Qt.UserRole])
         return True
 
     def _parse_value(self, value, old_value):
@@ -179,6 +182,33 @@ class ComponentFilterProxyModel(QSortFilterProxyModel):
 
         return False
 
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        model = self.sourceModel()
+        if model is None:
+            return super().lessThan(left, right)
+
+        left_value = model.data(left, Qt.UserRole)
+        right_value = model.data(right, Qt.UserRole)
+
+        left_missing = left_value is None or pd.isna(left_value)
+        right_missing = right_value is None or pd.isna(right_value)
+
+        if left_missing and right_missing:
+            return False
+        if left_missing:
+            return False
+        if right_missing:
+            return True
+
+        numeric_types = (int, float)
+        if isinstance(left_value, numeric_types) and isinstance(right_value, numeric_types):
+            return left_value < right_value
+
+        if isinstance(left_value, bool) and isinstance(right_value, bool):
+            return left_value < right_value
+
+        return str(left_value).casefold() < str(right_value).casefold()
+
 
 class ComponentPage(QWidget):
     def __init__(self, component_name: str, parent: QWidget | None = None) -> None:
@@ -190,6 +220,7 @@ class ComponentPage(QWidget):
 
         self.proxy_model = ComponentFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
+        self.proxy_model.setDynamicSortFilter(True)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search table...")
@@ -198,7 +229,7 @@ class ComponentPage(QWidget):
         self.table = QTableView()
         self.table.setModel(self.proxy_model)
 
-        self.table.setSortingEnabled(False)
+        self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
@@ -262,3 +293,5 @@ class ComponentPage(QWidget):
         name_column_index = columns.index("name") if "name" in columns else -1
         if name_column_index >= 0:
             self.table.setColumnWidth(name_column_index, 180)
+
+        self.table.sortByColumn(0, Qt.AscendingOrder)
