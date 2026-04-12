@@ -165,9 +165,14 @@ class ComponentFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._filter_text = ""
+        self._visible_columns: set[int] | None = None
 
     def set_filter_text(self, text: str) -> None:
         self._filter_text = text.casefold().strip()
+        self.invalidateFilter()
+
+    def set_visible_columns(self, visible_columns: set[int]) -> None:
+        self._visible_columns = visible_columns
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
@@ -178,7 +183,12 @@ class ComponentFilterProxyModel(QSortFilterProxyModel):
         if model is None:
             return True
 
-        for column in range(model.columnCount()):
+        if self._visible_columns is None:
+            columns_to_search = range(model.columnCount())
+        else:
+            columns_to_search = sorted(self._visible_columns)
+
+        for column in columns_to_search:
             index = model.index(source_row, column, source_parent)
             value = model.data(index, Qt.DisplayRole)
             if value is not None and self._filter_text in str(value).casefold():
@@ -213,7 +223,7 @@ class ComponentFilterProxyModel(QSortFilterProxyModel):
 
         return str(left_value).casefold() < str(right_value).casefold()
 
-
+    
 class ComponentPage(QWidget):
     def __init__(self, component_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -228,7 +238,7 @@ class ComponentPage(QWidget):
         self.proxy_model.setDynamicSortFilter(True)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search table...")
+        self.search_box.setPlaceholderText("Search visible columns...")
         self.search_box.textChanged.connect(self.proxy_model.set_filter_text)
 
         self.columns_button = QPushButton("Columns")
@@ -313,6 +323,7 @@ class ComponentPage(QWidget):
             self.table.setColumnWidth(name_column_index, 180)
 
         self._rebuild_columns_menu(columns)
+        self._update_proxy_visible_columns()
         self.table.sortByColumn(0, Qt.AscendingOrder)
 
     def copy_selection_to_clipboard(self) -> None:
@@ -352,7 +363,19 @@ class ComponentPage(QWidget):
             action.setCheckable(True)
             action.setChecked(not self.table.isColumnHidden(column_index))
             action.toggled.connect(
-                lambda checked, col=column_index: self.table.setColumnHidden(col, not checked)
+                lambda checked, col=column_index: self._set_column_visible(col, checked)
             )
             self.columns_menu.addAction(action)
             self._column_actions[column_index] = action
+
+    def _update_proxy_visible_columns(self) -> None:
+        visible_columns = {
+            column_index
+            for column_index in range(self.model.columnCount())
+            if not self.table.isColumnHidden(column_index)
+        }
+        self.proxy_model.set_visible_columns(visible_columns)
+
+    def _set_column_visible(self, column_index: int, visible: bool) -> None:
+        self.table.setColumnHidden(column_index, not visible)
+        self._update_proxy_visible_columns()
