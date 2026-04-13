@@ -16,11 +16,17 @@ from PySide6.QtWidgets import (
     QToolBar,
     QTreeWidget,
     QTreeWidgetItem,
+    QDialog,
 )
 
 import pypsa
 
 from pypsa_gui.models.network_session import NetworkSession
+from pypsa_gui.models.session_view import (
+    NAVIGATION_STRUCTURE,
+    SECTION_TITLES,
+    SessionViewOptions,
+)
 from pypsa_gui.services.network_io import (
     load_network_from_csv_folder,
     load_network_from_netcdf,
@@ -30,7 +36,9 @@ from pypsa_gui.services.network_store import NetworkStore
 from pypsa_gui.services.optimisation import OptimisationRunner
 from pypsa_gui.ui.central_panel import CentralPanel
 from pypsa_gui.workers.optimisation_worker import OptimisationWorker
-
+from pypsa_gui.ui.dialogs.workspace_selection_dialog import (
+    WorkspaceSelectionDialog,
+)
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -144,49 +152,12 @@ class MainWindow(QMainWindow):
         tool_bar.addAction(self.run_power_flow_action)
 
     def _create_central_widget(self) -> None:
-        self.central_panel = CentralPanel(self)
+        self.central_panel = CentralPanel(parent=self)
         self.setCentralWidget(self.central_panel)
 
     def _create_navigation_dock(self) -> None:
         self.navigation_tree = QTreeWidget(self)
         self.navigation_tree.setHeaderHidden(True)
-
-        overview_item = QTreeWidgetItem(["Overview"])
-
-        components_item = QTreeWidgetItem(["Components"])
-        QTreeWidgetItem(components_item, ["Buses"])
-        QTreeWidgetItem(components_item, ["Generators"])
-        QTreeWidgetItem(components_item, ["Loads"])
-        QTreeWidgetItem(components_item, ["Lines"])
-        QTreeWidgetItem(components_item, ["Links"])
-        QTreeWidgetItem(components_item, ["Stores"])
-        QTreeWidgetItem(components_item, ["Storage Units"])
-        QTreeWidgetItem(components_item, ["Global Constraints"])
-
-        analysis_item = QTreeWidgetItem(["Analysis"])
-        QTreeWidgetItem(analysis_item, ["Summary"])
-        QTreeWidgetItem(analysis_item, ["Prices"])
-        QTreeWidgetItem(analysis_item, ["Congestion"])
-        QTreeWidgetItem(analysis_item, ["Storage"])
-        QTreeWidgetItem(analysis_item, ["Emissions"])
-
-        plots_item = QTreeWidgetItem(["Plots"])
-        QTreeWidgetItem(plots_item, ["Network Map"])
-        QTreeWidgetItem(plots_item, ["Time Series"])
-        QTreeWidgetItem(plots_item, ["Capacities"])
-
-        run_item = QTreeWidgetItem(["Run"])
-        QTreeWidgetItem(run_item, ["Power Flow"])
-        QTreeWidgetItem(run_item, ["Optimisation"])
-        QTreeWidgetItem(run_item, ["Solver Settings"])
-
-        self.navigation_tree.addTopLevelItem(overview_item)
-        self.navigation_tree.addTopLevelItem(components_item)
-        self.navigation_tree.addTopLevelItem(analysis_item)
-        self.navigation_tree.addTopLevelItem(plots_item)
-        self.navigation_tree.addTopLevelItem(run_item)
-
-        self.navigation_tree.expandAll()
         self.navigation_tree.itemClicked.connect(self.on_navigation_item_clicked)
 
         dock = QDockWidget("Navigation", self)
@@ -197,6 +168,36 @@ class MainWindow(QMainWindow):
         )
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self._rebuild_navigation_tree()
+
+    def _rebuild_navigation_tree(self) -> None:
+        self.navigation_tree.blockSignals(True)
+        self.navigation_tree.clear()
+
+        session = self.active_session()
+        if session is None:
+            enabled_sections = {"overview", "components", "analysis", "plots", "run"}
+        else:
+            enabled_sections = session.view_options.enabled_sections
+
+        section_order = ["overview", "components", "analysis", "plots", "run"]
+
+        for section_key in section_order:
+            if section_key not in enabled_sections:
+                continue
+
+            title = SECTION_TITLES[section_key]
+            children = NAVIGATION_STRUCTURE[section_key]
+
+            parent_item = QTreeWidgetItem([title])
+
+            for child_name in children:
+                QTreeWidgetItem(parent_item, [child_name])
+
+            self.navigation_tree.addTopLevelItem(parent_item)
+
+        self.navigation_tree.expandAll()
+        self.navigation_tree.blockSignals(False)
 
     def _create_loaded_networks_dock(self) -> None:
         self.loaded_networks_list = QListWidget(self)
@@ -261,11 +262,17 @@ class MainWindow(QMainWindow):
     def _refresh_active_session_ui(self) -> None:
         session = self.active_session()
 
+        self._rebuild_navigation_tree()
+
         if session is None:
+            self.central_panel.rebuild_pages(
+                {"overview", "components", "analysis", "plots", "run"}
+            )
             self.setWindowTitle("pypsa-gui")
             self._refresh_loaded_networks_dock()
             return
 
+        self.central_panel.rebuild_pages(session.view_options.enabled_sections)
         self.central_panel.update_network_dependent_pages(session.network)
 
         self.log("Network loaded successfully.")
@@ -286,10 +293,11 @@ class MainWindow(QMainWindow):
         self._refresh_loaded_networks_dock()
 
     def _add_network_session(
-        self,
-        network: pypsa.Network,
-        source_path: Path | None,
-        name: str | None = None,
+            self,
+            network: pypsa.Network,
+            source_path: Path | None,
+            view_options: SessionViewOptions,
+            name: str | None = None,
     ) -> None:
         session_name = name or (
             source_path.stem if source_path is not None else "unsaved network"
@@ -301,6 +309,7 @@ class MainWindow(QMainWindow):
             network=network,
             source_path=source_path,
             is_modified=False,
+            view_options=view_options,
         )
 
         self.network_store.add_session(session)
@@ -362,6 +371,11 @@ class MainWindow(QMainWindow):
             self.log("Open NetCDF cancelled.")
             return
 
+        view_options = self._ask_for_view_options()
+        if view_options is None:
+            self.log("Workspace selection cancelled.")
+            return
+
         self.log(f"Loading NetCDF network: {file_path}")
 
         try:
@@ -369,6 +383,7 @@ class MainWindow(QMainWindow):
             self._add_network_session(
                 network=network,
                 source_path=Path(file_path),
+                view_options=view_options,
             )
         except Exception as exc:
             self.log(f"Error loading NetCDF network: {exc}")
@@ -389,6 +404,11 @@ class MainWindow(QMainWindow):
             self.log("Open CSV folder cancelled.")
             return
 
+        view_options = self._ask_for_view_options()
+        if view_options is None:
+            self.log("Workspace selection cancelled.")
+            return
+
         self.log(f"Loading CSV network from folder: {folder_path}")
 
         try:
@@ -396,6 +416,7 @@ class MainWindow(QMainWindow):
             self._add_network_session(
                 network=network,
                 source_path=Path(folder_path),
+                view_options=view_options,
             )
         except Exception as exc:
             self.log(f"Error loading CSV folder: {exc}")
@@ -404,7 +425,7 @@ class MainWindow(QMainWindow):
                 "Load Error",
                 f"Could not load CSV network:\n{exc}",
             )
-
+            
     def save_as_netcdf(self) -> None:
         session = self.active_session()
 
@@ -576,3 +597,14 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+    def _ask_for_view_options(self) -> SessionViewOptions | None:
+        dialog = WorkspaceSelectionDialog(self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        return SessionViewOptions(
+            workspace_name=dialog.selected_workspace_name(),
+            enabled_sections=dialog.selected_enabled_sections(),
+        )
