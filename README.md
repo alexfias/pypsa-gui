@@ -2,6 +2,8 @@
 
 An experimental desktop GUI for inspecting, solving, and visualising PyPSA networks.
 
+![pypsa-gui screenshot](docs/images/screenshot.png)
+
 ## Overview
 
 `pypsa-gui` aims to provide a lightweight interactive workbench for PyPSA models without requiring the user to work directly in notebooks or ad-hoc scripts.
