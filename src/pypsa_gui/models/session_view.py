@@ -77,3 +77,13 @@ class SessionViewOptions:
     enabled_sections: set[str] = field(
         default_factory=lambda: set(WORKSPACE_PRESETS["full"])
     )
+
+    @classmethod
+    def from_workspace(cls, workspace_name: str) -> "SessionViewOptions":
+        return cls(
+            workspace_name=workspace_name,
+            enabled_sections=set(WORKSPACE_PRESETS[workspace_name]),
+        )
+
+    def is_section_enabled(self, section: str) -> bool:
+        return section in self.enabled_sections

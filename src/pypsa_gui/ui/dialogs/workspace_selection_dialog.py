@@ -1,5 +1,3 @@
-# src/pypsa_gui/ui/dialogs/workspace_selection_dialog.py
-
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
@@ -55,8 +53,6 @@ class WorkspaceSelectionDialog(QDialog):
 
         for section_key in SECTION_ORDER:
             checkbox = QCheckBox(SECTION_LABELS[section_key])
-            checkbox.setChecked(section_key in WORKSPACE_PRESETS["full"])
-            checkbox.setEnabled(False)
             self.custom_checkboxes[section_key] = checkbox
             custom_layout.addWidget(checkbox)
 
@@ -79,10 +75,30 @@ class WorkspaceSelectionDialog(QDialog):
         layout.addStretch()
         layout.addWidget(button_box)
 
-    def _on_workspace_changed(self) -> None:
-        is_custom = self.custom_radio.isChecked()
+        self._apply_workspace_preset("full")
+        self._set_custom_checkboxes_enabled(False)
+
+    def _apply_workspace_preset(self, workspace_name: str) -> None:
+        enabled_sections = WORKSPACE_PRESETS[workspace_name]
+        for section_key, checkbox in self.custom_checkboxes.items():
+            checkbox.setChecked(section_key in enabled_sections)
+
+    def _set_custom_checkboxes_enabled(self, enabled: bool) -> None:
         for checkbox in self.custom_checkboxes.values():
-            checkbox.setEnabled(is_custom)
+            checkbox.setEnabled(enabled)
+
+    def _on_workspace_changed(self) -> None:
+        if self.full_radio.isChecked():
+            self._apply_workspace_preset("full")
+            self._set_custom_checkboxes_enabled(False)
+        elif self.lightweight_radio.isChecked():
+            self._apply_workspace_preset("lightweight")
+            self._set_custom_checkboxes_enabled(False)
+        elif self.analysis_radio.isChecked():
+            self._apply_workspace_preset("analysis")
+            self._set_custom_checkboxes_enabled(False)
+        elif self.custom_radio.isChecked():
+            self._set_custom_checkboxes_enabled(True)
 
     def selected_workspace_name(self) -> str:
         if self.full_radio.isChecked():
