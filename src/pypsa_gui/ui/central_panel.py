@@ -7,9 +7,9 @@ from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 from pypsa_gui.models.session_view import PAGE_TO_SECTION
 from pypsa_gui.ui.pages.buses_page import BusesPage
 from pypsa_gui.ui.pages.component_page import ComponentPage
+from pypsa_gui.ui.pages.optimisation_page import OptimisationPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
 from pypsa_gui.ui.pages.summary_page import SummaryPage
-
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -65,7 +65,7 @@ class CentralPanel(QWidget):
             "Time Series": lambda: PlaceholderPage("Time Series"),
             "Capacities": lambda: PlaceholderPage("Capacities"),
             "Power Flow": lambda: PlaceholderPage("Power Flow"),
-            "Optimisation": lambda: PlaceholderPage("Optimisation"),
+            "Optimisation": OptimisationPage,
             "Solver Settings": lambda: PlaceholderPage("Solver Settings"),
         }
 
