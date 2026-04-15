@@ -58,10 +58,12 @@ class OptimisationPage(QWidget):
 
         self.matrix_shape_label = QLabel("-")
         self.matrix_density_label = QLabel("-")
+        self.ram_label = QLabel("-")
 
         details_layout = QFormLayout()
         details_layout.addRow("Matrix shape:", self.matrix_shape_label)
         details_layout.addRow("Matrix density:", self.matrix_density_label)
+        details_layout.addRow("Estimated RAM:", self.ram_label)
 
         details_group = QGroupBox("Details")
         details_group.setLayout(details_layout)
@@ -93,6 +95,7 @@ class OptimisationPage(QWidget):
         self.size_card.set_value("-")
         self.matrix_shape_label.setText("-")
         self.matrix_density_label.setText("-")
+        self.ram_label.setText("-")
 
     def _preview_model(self) -> None:
         if self.network is None:
@@ -124,6 +127,16 @@ class OptimisationPage(QWidget):
             self.matrix_density_label.setText(f"{preview.matrix_density:.6f}")
         else:
             self.matrix_density_label.setText("-")
+
+        if (
+            preview.estimated_ram_low_gb is not None
+            and preview.estimated_ram_high_gb is not None
+        ):
+            self.ram_label.setText(
+                f"{preview.estimated_ram_low_gb:.1f} – {preview.estimated_ram_high_gb:.1f} GB"
+            )
+        else:
+            self.ram_label.setText("-")
 
         self.status_label.setText("Model preview created successfully.")
         self.preview_button.setEnabled(True)

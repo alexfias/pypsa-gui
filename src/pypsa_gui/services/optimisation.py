@@ -13,6 +13,8 @@ class OptimisationPreview:
     matrix_rows: int | None
     matrix_cols: int | None
     matrix_density: float | None
+    estimated_ram_low_gb: float | None
+    estimated_ram_high_gb: float | None
     status: str
 
 
@@ -50,6 +52,13 @@ def preview_network_optimisation(network: pypsa.Network) -> OptimisationPreview:
     except Exception:
         pass
 
+    # 👉 NEW
+    ram_low, ram_high = _estimate_lp_ram_gb(
+        nonzeros,
+        variables,
+        constraints,
+    )
+
     return OptimisationPreview(
         variables=variables,
         constraints=constraints,
@@ -57,6 +66,8 @@ def preview_network_optimisation(network: pypsa.Network) -> OptimisationPreview:
         matrix_rows=matrix_rows,
         matrix_cols=matrix_cols,
         matrix_density=matrix_density,
+        estimated_ram_low_gb=ram_low,
+        estimated_ram_high_gb=ram_high,
         status=_classify_model_size(variables, constraints),
     )
 
@@ -97,3 +108,26 @@ class OptimisationRunner:
 
         terminate()
         return True, "Cancellation requested."
+
+
+def _estimate_lp_ram_gb(
+    nonzeros: int | None,
+    variables: int,
+    constraints: int,
+) -> tuple[float | None, float | None]:
+    if nonzeros is None:
+        return None, None
+
+    # Base sparse matrix + vectors
+    base_bytes = (
+        nonzeros * 24
+        + variables * 16
+        + constraints * 16
+    )
+
+    # Solver overhead (LP, barrier-ish)
+    low_bytes = base_bytes * 3.0
+    high_bytes = base_bytes * 8.0
+
+    gb = 1024 ** 3
+    return low_bytes / gb, high_bytes / gb
