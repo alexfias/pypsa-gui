@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 from pypsa_gui.models.session_view import PAGE_TO_SECTION
 from pypsa_gui.ui.pages.buses_page import BusesPage
 from pypsa_gui.ui.pages.component_page import ComponentPage
+from pypsa_gui.ui.pages.network_map_page import NetworkMapPage
 from pypsa_gui.ui.pages.optimisation_page import OptimisationPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
 from pypsa_gui.ui.pages.summary_page import SummaryPage
@@ -61,7 +62,7 @@ class CentralPanel(QWidget):
             "Congestion": lambda: PlaceholderPage("Congestion"),
             "Storage": lambda: PlaceholderPage("Storage"),
             "Emissions": lambda: PlaceholderPage("Emissions"),
-            "Network Map": lambda: PlaceholderPage("Network Map"),
+            "Network Map": NetworkMapPage,
             "Time Series": lambda: PlaceholderPage("Time Series"),
             "Capacities": lambda: PlaceholderPage("Capacities"),
             "Power Flow": lambda: PlaceholderPage("Power Flow"),
