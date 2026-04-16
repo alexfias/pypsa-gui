@@ -7,24 +7,27 @@ name = "pypsa-gui"
 version = "0.1.0"
 description = "A desktop GUI for inspecting, editing, solving, and visualising PyPSA networks"
 authors = [
-{ name = "Alexander Kies" }
+  { name = "Alexander Kies" }
 ]
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 
 dependencies = [
-"pypsa",
-"pandas",
-"PySide6",
-"matplotlib"
+  "pypsa",
+  "pandas",
+  "PySide6",
+  "matplotlib"
 ]
 
 [project.optional-dependencies]
 dev = [
-"pytest",
-"black",
-"ruff"
+  "pytest",
+  "black",
+  "ruff"
+]
+map = [
+  "cartopy"
 ]
 
 [project.scripts]
