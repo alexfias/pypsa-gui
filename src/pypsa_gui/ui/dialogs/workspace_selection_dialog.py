@@ -21,10 +21,17 @@ SECTION_LABELS: dict[str, str] = {
     "analysis": "Analysis",
     "plots": "Plots",
     "run": "Run",
+    "research_modules": "Research Modules",
 }
 
-SECTION_ORDER = ["overview", "components", "analysis", "plots", "run"]
-
+SECTION_ORDER = [
+    "overview",
+    "components",
+    "analysis",
+    "plots",
+    "run",
+    "research_modules",
+]
 
 class WorkspaceSelectionDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:

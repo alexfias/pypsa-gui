@@ -27,6 +27,7 @@ from pypsa_gui.models.session_view import (
     SECTION_TITLES,
     SessionViewOptions,
 )
+from pypsa_gui.modules.registry import create_module_registry
 from pypsa_gui.services.network_io import (
     load_network_from_csv_folder,
     load_network_from_netcdf,
@@ -40,11 +41,13 @@ from pypsa_gui.ui.dialogs.workspace_selection_dialog import (
     WorkspaceSelectionDialog,
 )
 
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
         self.network_store = NetworkStore()
+        self.modules = create_module_registry()
 
         self.optimisation_runner: OptimisationRunner | None = None
         self.optimisation_worker: OptimisationWorker | None = None
@@ -176,18 +179,45 @@ class MainWindow(QMainWindow):
 
         session = self.active_session()
         if session is None:
-            enabled_sections = {"overview", "components", "analysis", "plots", "run"}
+            enabled_sections = {
+                "overview",
+                "components",
+                "analysis",
+                "plots",
+                "run",
+                "research_modules",
+            }
+            network = None
         else:
             enabled_sections = session.view_options.enabled_sections
+            network = session.network
 
-        section_order = ["overview", "components", "analysis", "plots", "run"]
+        section_order = [
+            "overview",
+            "components",
+            "analysis",
+            "plots",
+            "run",
+            "research_modules",
+        ]
 
         for section_key in section_order:
             if section_key not in enabled_sections:
                 continue
 
             title = SECTION_TITLES[section_key]
-            children = NAVIGATION_STRUCTURE[section_key]
+            children = list(NAVIGATION_STRUCTURE.get(section_key, []))
+
+            if section_key == "research_modules":
+                for module in self.modules:
+                    module.set_network(network)
+                    if not module.is_available(network):
+                        continue
+                    for page_def in module.get_pages():
+                        children.append(page_def.title)
+
+            if not children:
+                continue
 
             parent_item = QTreeWidgetItem([title])
 
@@ -256,24 +286,58 @@ class MainWindow(QMainWindow):
         self.run_power_flow_action.setEnabled(not is_running)
 
     # ------------------------------------------------------------------
+    # Research modules
+    # ------------------------------------------------------------------
+
+    def _refresh_research_modules(self) -> None:
+        network = self.active_network()
+
+        self.central_panel.clear_module_pages()
+
+        for module in self.modules:
+            module.set_network(network)
+
+            if not module.is_available(network):
+                continue
+
+            for page_def in module.get_pages():
+                page = module.create_page(page_def.key, parent=self.central_panel)
+
+                if hasattr(page, "set_network"):
+                    page.set_network(network)
+                elif hasattr(page, "update_from_network"):
+                    page.update_from_network(network)
+
+                self.central_panel.add_module_page(page_def.title, page)
+
+    # ------------------------------------------------------------------
     # Session and network handling
     # ------------------------------------------------------------------
 
     def _refresh_active_session_ui(self) -> None:
         session = self.active_session()
 
-        self._rebuild_navigation_tree()
-
         if session is None:
             self.central_panel.rebuild_pages(
-                {"overview", "components", "analysis", "plots", "run"}
+                {
+                    "overview",
+                    "components",
+                    "analysis",
+                    "plots",
+                    "run",
+                    "research_modules",
+                }
             )
+            self._refresh_research_modules()
+            self._rebuild_navigation_tree()
             self.setWindowTitle("pypsa-gui")
             self._refresh_loaded_networks_dock()
             return
 
         self.central_panel.rebuild_pages(session.view_options.enabled_sections)
+        self._refresh_research_modules()
         self.central_panel.update_network_dependent_pages(session.network)
+        self._rebuild_navigation_tree()
 
         self.log("Network loaded successfully.")
         self.log(
@@ -293,11 +357,11 @@ class MainWindow(QMainWindow):
         self._refresh_loaded_networks_dock()
 
     def _add_network_session(
-            self,
-            network: pypsa.Network,
-            source_path: Path | None,
-            view_options: SessionViewOptions,
-            name: str | None = None,
+        self,
+        network: pypsa.Network,
+        source_path: Path | None,
+        view_options: SessionViewOptions,
+        name: str | None = None,
     ) -> None:
         session_name = name or (
             source_path.stem if source_path is not None else "unsaved network"
@@ -425,7 +489,7 @@ class MainWindow(QMainWindow):
                 "Load Error",
                 f"Could not load CSV network:\n{exc}",
             )
-            
+
     def save_as_netcdf(self) -> None:
         session = self.active_session()
 
@@ -529,6 +593,7 @@ class MainWindow(QMainWindow):
 
         if session is not None:
             session.is_modified = True
+            self._refresh_active_session_ui()
             self.central_panel.set_network(session.network)
 
         QMessageBox.information(

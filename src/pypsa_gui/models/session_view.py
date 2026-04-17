@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 WORKSPACE_PRESETS: dict[str, set[str]] = {
-    "full": {"overview", "components", "analysis", "plots", "run"},
+    "full": {"overview", "components", "analysis", "plots", "run","research_modules",},
     "lightweight": {"components", "run"},
     "analysis": {"overview", "analysis", "plots"},
 }
@@ -37,6 +37,7 @@ NAVIGATION_STRUCTURE: dict[str, list[str]] = {
         "Optimisation",
         "Solver Settings",
     ],
+    "research_modules": [],
 }
 
 SECTION_TITLES: dict[str, str] = {
@@ -45,6 +46,7 @@ SECTION_TITLES: dict[str, str] = {
     "analysis": "Analysis",
     "plots": "Plots",
     "run": "Run",
+    "research_modules": "Research Modules",
 }
 
 PAGE_TO_SECTION: dict[str, str] = {

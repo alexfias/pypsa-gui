@@ -13,6 +13,7 @@ from pypsa_gui.ui.pages.overview_page import OverviewPage
 from pypsa_gui.ui.pages.capacities_page import CapacitiesPage
 from pypsa_gui.ui.pages.summary_page import SummaryPage
 
+
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
         super().__init__()
@@ -36,11 +37,13 @@ class CentralPanel(QWidget):
             "analysis",
             "plots",
             "run",
+            "research_modules",
         }
 
         self.stack = QStackedWidget()
         self.pages: dict[str, QWidget] = {}
-        self._page_factories = self._build_page_factories()
+        self._core_page_factories = self._build_page_factories()
+        self._module_pages: dict[str, QWidget] = {}
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.stack)
@@ -75,12 +78,15 @@ class CentralPanel(QWidget):
         self.enabled_sections = set(enabled_sections)
         self._clear_pages()
 
-        for page_name, factory in self._page_factories.items():
+        for page_name, factory in self._core_page_factories.items():
             section_key = PAGE_TO_SECTION.get(page_name)
             if section_key not in self.enabled_sections:
                 continue
 
             self._add_page(page_name, factory())
+
+        for page_name, widget in self._module_pages.items():
+            self._add_page(page_name, widget)
 
     def _clear_pages(self) -> None:
         self.pages.clear()
@@ -88,11 +94,27 @@ class CentralPanel(QWidget):
         while self.stack.count():
             widget = self.stack.widget(0)
             self.stack.removeWidget(widget)
-            widget.deleteLater()
+            widget.setParent(None)
 
     def _add_page(self, name: str, widget: QWidget) -> None:
         self.pages[name] = widget
         self.stack.addWidget(widget)
+
+    def clear_module_pages(self) -> None:
+        for page_name, widget in self._module_pages.items():
+            if self.pages.get(page_name) is widget:
+                self.stack.removeWidget(widget)
+                self.pages.pop(page_name, None)
+                widget.deleteLater()
+
+        self._module_pages.clear()
+
+    def add_module_page(self, name: str, widget: QWidget) -> None:
+        if name in self.pages:
+            return
+
+        self._module_pages[name] = widget
+        self._add_page(name, widget)
 
     def set_current_page(self, name: str) -> None:
         widget = self.pages.get(name)
