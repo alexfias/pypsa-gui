@@ -36,6 +36,7 @@ NAVIGATION_STRUCTURE: dict[str, list[str]] = {
         "Power Flow",
         "Optimisation",
         "Solver Settings",
+        "Pre-Run Tools",
     ],
     "research_modules": [],
 }
@@ -70,6 +71,7 @@ PAGE_TO_SECTION: dict[str, str] = {
     "Power Flow": "run",
     "Optimisation": "run",
     "Solver Settings": "run",
+    "Pre-Run Tools": "run",
 }
 
 

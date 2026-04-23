@@ -15,6 +15,7 @@ from pypsa_gui.ui.pages.summary_page import SummaryPage
 from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
 from pypsa_gui.ui.pages.emissions_page import EmissionsPage
 from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
+from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -74,6 +75,7 @@ class CentralPanel(QWidget):
             "Power Flow": lambda: PlaceholderPage("Power Flow"),
             "Optimisation": OptimisationPage,
             "Solver Settings": lambda: PlaceholderPage("Solver Settings"),
+            "Pre-Run Tools": PreRunToolsPage,
         }
 
     def rebuild_pages(self, enabled_sections: set[str]) -> None:
