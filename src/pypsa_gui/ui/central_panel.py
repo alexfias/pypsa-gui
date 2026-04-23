@@ -18,6 +18,8 @@ from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
 from pypsa_gui.ui.pages.congestion_page import CongestionPage
 from pypsa_gui.ui.pages.run.solver_settings_page import SolverSettingsPage
+from pypsa_gui.ui.pages.time_series_page import TimeSeriesPage
+
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -72,7 +74,7 @@ class CentralPanel(QWidget):
             "Storage": StoragePage,
             "Emissions": EmissionsPage,
             "Network Map": NetworkMapPage,
-            "Time Series": lambda: PlaceholderPage("Time Series"),
+            "Time Series": TimeSeriesPage,
             "Capacities": CapacitiesPage,
             "Power Flow": lambda: PlaceholderPage("Power Flow"),
             "Optimisation": OptimisationPage,
