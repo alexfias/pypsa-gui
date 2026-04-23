@@ -17,6 +17,7 @@ from pypsa_gui.ui.pages.emissions_page import EmissionsPage
 from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
 from pypsa_gui.ui.pages.congestion_page import CongestionPage
+from pypsa_gui.ui.pages.run.solver_settings_page import SolverSettingsPage
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -75,7 +76,7 @@ class CentralPanel(QWidget):
             "Capacities": CapacitiesPage,
             "Power Flow": lambda: PlaceholderPage("Power Flow"),
             "Optimisation": OptimisationPage,
-            "Solver Settings": lambda: PlaceholderPage("Solver Settings"),
+            "Solver Settings": SolverSettingsPage,
             "Pre-Run Tools": PreRunToolsPage,
         }
 
