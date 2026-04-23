@@ -12,7 +12,7 @@ from pypsa_gui.ui.pages.optimisation_page import OptimisationPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
 from pypsa_gui.ui.pages.capacities_page import CapacitiesPage
 from pypsa_gui.ui.pages.summary_page import SummaryPage
-
+from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -62,7 +62,7 @@ class CentralPanel(QWidget):
             "Stores": lambda: ComponentPage("stores"),
             "Storage Units": lambda: ComponentPage("storage_units"),
             "Global Constraints": lambda: ComponentPage("global_constraints"),
-            "Prices": lambda: PlaceholderPage("Prices"),
+            "Prices": PricesPage,
             "Congestion": lambda: PlaceholderPage("Congestion"),
             "Storage": lambda: PlaceholderPage("Storage"),
             "Emissions": lambda: PlaceholderPage("Emissions"),
