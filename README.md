@@ -133,7 +133,7 @@ Design principle:
 ## Installation (development)
 
 ```bash
-git clone https://github.com/<your-username>/pypsa-gui.git
+git clone https://github.com/alex/pypsa-gui.git
 cd pypsa-gui
 pip install -e .
 ```
