@@ -16,6 +16,7 @@ from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
 from pypsa_gui.ui.pages.emissions_page import EmissionsPage
 from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
+from pypsa_gui.ui.pages.congestion_page import CongestionPage
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -66,7 +67,7 @@ class CentralPanel(QWidget):
             "Storage Units": lambda: ComponentPage("storage_units"),
             "Global Constraints": lambda: ComponentPage("global_constraints"),
             "Prices": PricesPage,
-            "Congestion": lambda: PlaceholderPage("Congestion"),
+            "Congestion": CongestionPage,
             "Storage": StoragePage,
             "Emissions": EmissionsPage,
             "Network Map": NetworkMapPage,
