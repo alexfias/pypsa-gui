@@ -108,6 +108,11 @@ class CentralPanel(QWidget):
         self.pages[name] = widget
         self.stack.addWidget(widget)
 
+        if name == "Overview" and isinstance(widget, OverviewPage):
+            widget.open_component_requested.connect(
+                self.open_component_from_overview
+            )
+            
     def clear_module_pages(self) -> None:
         for page_name, widget in self._module_pages.items():
             if self.pages.get(page_name) is widget:
@@ -143,3 +148,23 @@ class CentralPanel(QWidget):
 
     def set_network(self, network) -> None:
         self.update_network_dependent_pages(network)
+
+
+    def open_component_from_overview(self, component_type: str, bus_name: str) -> None:
+        page_name_by_component = {
+            "buses": "Buses",
+            "generators": "Generators",
+            "loads": "Loads",
+            "lines": "Lines",
+            "links": "Links",
+        }
+
+        page_name = page_name_by_component.get(component_type)
+        if page_name is None:
+            return
+
+        self.show_page(page_name)
+
+        page = self.pages.get(page_name)
+        if page is not None and hasattr(page, "filter_by_bus"):
+            page.filter_by_bus(bus_name)

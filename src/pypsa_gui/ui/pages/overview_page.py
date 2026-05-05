@@ -5,10 +5,20 @@ from typing import Any
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class OverviewPage(QWidget):
+    open_component_requested = Signal(str, str)
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -28,10 +38,51 @@ class OverviewPage(QWidget):
             "Click a bus on the map to inspect attached components."
         )
 
+        self.open_buses_button = QPushButton("Open Bus")
+        self.open_generators_button = QPushButton("Open Generators")
+        self.open_loads_button = QPushButton("Open Loads")
+        self.open_lines_button = QPushButton("Open Lines")
+        self.open_links_button = QPushButton("Open Links")
+
+        self.component_buttons = [
+            self.open_buses_button,
+            self.open_generators_button,
+            self.open_loads_button,
+            self.open_lines_button,
+            self.open_links_button,
+        ]
+
+        for button in self.component_buttons:
+            button.setEnabled(False)
+
+        self.open_buses_button.clicked.connect(
+            lambda: self._request_component_page("buses")
+        )
+        self.open_generators_button.clicked.connect(
+            lambda: self._request_component_page("generators")
+        )
+        self.open_loads_button.clicked.connect(
+            lambda: self._request_component_page("loads")
+        )
+        self.open_lines_button.clicked.connect(
+            lambda: self._request_component_page("lines")
+        )
+        self.open_links_button.clicked.connect(
+            lambda: self._request_component_page("links")
+        )
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.open_buses_button)
+        button_layout.addWidget(self.open_generators_button)
+        button_layout.addWidget(self.open_loads_button)
+        button_layout.addWidget(self.open_lines_button)
+        button_layout.addWidget(self.open_links_button)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self.title_label)
         layout.addWidget(self.canvas)
         layout.addWidget(self.bus_details)
+        layout.addLayout(button_layout)
 
         self._show_empty_message()
 
@@ -80,7 +131,6 @@ class OverviewPage(QWidget):
 
             neighbour_buses.discard(self.selected_bus)
 
-        # draw all lines
         if not self.network.lines.empty:
             for line_name, line in self.network.lines.iterrows():
                 self._plot_branch(
@@ -93,7 +143,6 @@ class OverviewPage(QWidget):
                     zorder=3 if line_name in selected_lines else 1,
                 )
 
-        # draw all links, slightly dashed so they are visually distinct from lines
         if not self.network.links.empty:
             for link_name, link in self.network.links.iterrows():
                 self._plot_branch(
@@ -107,11 +156,9 @@ class OverviewPage(QWidget):
                     zorder=3 if link_name in selected_links else 1,
                 )
 
-        # draw all buses
         if not valid_buses.empty:
             ax.scatter(valid_buses["x"], valid_buses["y"], s=30, alpha=0.8, zorder=4)
 
-        # highlight neighbouring buses
         neighbour_buses = [b for b in neighbour_buses if b in valid_buses.index]
         if neighbour_buses:
             neighbours = valid_buses.loc[neighbour_buses]
@@ -126,7 +173,6 @@ class OverviewPage(QWidget):
                 zorder=5,
             )
 
-        # highlight selected bus
         if self.selected_bus in valid_buses.index:
             bus = valid_buses.loc[self.selected_bus]
             ax.scatter(
@@ -183,7 +229,7 @@ class OverviewPage(QWidget):
         if self.network is None:
             return
 
-        if event.xdata is None or event.ydata is None:
+        if event.xdata is None or event.ydata is None or event.inaxes is None:
             return
 
         buses = self.network.buses.dropna(subset=["x", "y"])
@@ -204,6 +250,9 @@ class OverviewPage(QWidget):
 
         if distance > tolerance:
             self.bus_details.setText("No bus selected. Click closer to a bus marker.")
+            self.selected_bus = None
+            self._set_component_buttons_enabled(False)
+            self.refresh()
             return
 
         self.selected_bus = str(bus_name)
@@ -227,10 +276,14 @@ class OverviewPage(QWidget):
 
         generator_capacity = self._capacity_sum(generators)
         load_capacity = self._capacity_sum(loads)
-        store_energy_capacity = self._capacity_sum(stores, preferred_columns=("e_nom_opt", "e_nom"))
+        store_energy_capacity = self._capacity_sum(
+            stores, preferred_columns=("e_nom_opt", "e_nom")
+        )
         storage_unit_capacity = self._capacity_sum(storage_units)
 
-        generator_dispatch = self._time_series_sum(n, "generators_t", "p", generators.index)
+        generator_dispatch = self._time_series_sum(
+            n, "generators_t", "p", generators.index
+        )
         load_dispatch = self._time_series_sum(n, "loads_t", "p", loads.index)
 
         def names(df: pd.DataFrame, max_items: int = 8) -> str:
@@ -282,6 +335,17 @@ Connected branches:
 """
 
         self.bus_details.setText(text.strip())
+        self._set_component_buttons_enabled(True)
+
+    def _request_component_page(self, component_type: str) -> None:
+        if self.selected_bus is None:
+            return
+
+        self.open_component_requested.emit(component_type, self.selected_bus)
+
+    def _set_component_buttons_enabled(self, enabled: bool) -> None:
+        for button in self.component_buttons:
+            button.setEnabled(enabled)
 
     def _capacity_sum(
         self,
@@ -346,5 +410,6 @@ Connected branches:
         self.bus_details.setText(
             "No network loaded. Load a PyPSA network to inspect buses."
         )
+        self._set_component_buttons_enabled(False)
 
         self.canvas.draw()
