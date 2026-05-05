@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QTableView,
     QVBoxLayout,
     QWidget,
+    QLabel,
 )
 
 
@@ -229,6 +230,7 @@ class ComponentPage(QWidget):
         super().__init__(parent)
         self.component_name = component_name
         self.network = None
+        self.active_bus_filter: str | None = None
         self._column_actions: dict[int, QAction] = {}
 
         self.model = ComponentTableModel(component_name=component_name)
@@ -241,6 +243,11 @@ class ComponentPage(QWidget):
         self.search_box.setPlaceholderText("Search visible columns...")
         self.search_box.textChanged.connect(self.proxy_model.set_filter_text)
 
+        self.filter_label = QLabel("")
+        self.clear_bus_filter_button = QPushButton("Clear Bus Filter")
+        self.clear_bus_filter_button.setEnabled(False)
+        self.clear_bus_filter_button.clicked.connect(self.clear_bus_filter)
+        
         self.columns_button = QPushButton("Columns")
         self.columns_menu = QMenu(self.columns_button)
         self.columns_button.setMenu(self.columns_menu)
@@ -273,6 +280,8 @@ class ComponentPage(QWidget):
         controls_layout = QHBoxLayout()
         controls_layout.addWidget(self.search_box, stretch=1)
         controls_layout.addWidget(self.columns_button)
+        controls_layout.addWidget(self.filter_label)
+        controls_layout.addWidget(self.clear_bus_filter_button)
 
         layout = QVBoxLayout(self)
         layout.addLayout(controls_layout)
@@ -280,6 +289,7 @@ class ComponentPage(QWidget):
 
     def set_network(self, network) -> None:
         self.network = network
+        self.active_bus_filter = None
         self.refresh()
 
     def refresh(self) -> None:
@@ -294,7 +304,11 @@ class ComponentPage(QWidget):
             self._rebuild_columns_menu([])
             return
 
+        df = self._apply_bus_filter(df)
+        self._update_filter_label()
+
         df_reset = df.reset_index()
+        
         columns = list(df_reset.columns)
 
         if "name" not in columns and len(columns) > 0:
@@ -379,3 +393,36 @@ class ComponentPage(QWidget):
     def _set_column_visible(self, column_index: int, visible: bool) -> None:
         self.table.setColumnHidden(column_index, not visible)
         self._update_proxy_visible_columns()
+
+    def filter_by_bus(self, bus_name: str) -> None:
+        self.active_bus_filter = bus_name
+        self.refresh()
+
+    def clear_bus_filter(self) -> None:
+        self.active_bus_filter = None
+        self.refresh()
+
+    def _apply_bus_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self.active_bus_filter is None:
+            return df
+
+        bus_name = self.active_bus_filter
+
+        if self.component_name == "buses":
+            return df.loc[df.index == bus_name]
+
+        if "bus" in df.columns:
+            return df[df["bus"] == bus_name]
+
+        if "bus0" in df.columns and "bus1" in df.columns:
+            return df[(df["bus0"] == bus_name) | (df["bus1"] == bus_name)]
+
+        return df
+
+    def _update_filter_label(self) -> None:
+        if self.active_bus_filter is None:
+            self.filter_label.setText("")
+            self.clear_bus_filter_button.setEnabled(False)
+        else:
+            self.filter_label.setText(f"Bus filter: {self.active_bus_filter}")
+            self.clear_bus_filter_button.setEnabled(True)
