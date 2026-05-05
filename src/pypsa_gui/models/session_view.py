@@ -9,7 +9,9 @@ WORKSPACE_PRESETS: dict[str, set[str]] = {
 }
 
 NAVIGATION_STRUCTURE: dict[str, list[str]] = {
-    "overview": [],
+    "overview": [
+        "Overview",
+    ],
     "components": [
         "Buses",
         "Generators",
