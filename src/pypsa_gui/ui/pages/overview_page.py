@@ -15,6 +15,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+try:
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
+    CARTOPY_AVAILABLE = True
+except ImportError:
+    ccrs = None
+    cfeature = None
+    CARTOPY_AVAILABLE = False
+
 
 class OverviewPage(QWidget):
     open_component_requested = Signal(str, str)
@@ -97,7 +107,15 @@ class OverviewPage(QWidget):
             return
 
         self.figure.clear()
-        ax = self.figure.add_subplot(111)
+
+        if CARTOPY_AVAILABLE:
+            ax = self.figure.add_subplot(111, projection=ccrs.PlateCarree())
+            ax.coastlines(linewidth=0.7)
+            ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+            ax.add_feature(cfeature.LAND, alpha=0.15)
+            ax.add_feature(cfeature.OCEAN, alpha=0.08)
+        else:
+            ax = self.figure.add_subplot(111)
 
         buses = self.network.buses
         valid_buses = buses.dropna(subset=["x", "y"])
@@ -171,6 +189,7 @@ class OverviewPage(QWidget):
                 edgecolors="black",
                 linewidths=1.5,
                 zorder=5,
+                transform=ccrs.PlateCarree() if CARTOPY_AVAILABLE else None,
             )
 
         if self.selected_bus in valid_buses.index:
@@ -184,12 +203,14 @@ class OverviewPage(QWidget):
                 edgecolors="black",
                 linewidths=2.5,
                 zorder=6,
+                transform=ccrs.PlateCarree() if CARTOPY_AVAILABLE else None,
             )
 
         ax.set_title("Network Map")
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_aspect("equal", adjustable="datalim")
+        if not CARTOPY_AVAILABLE:
+            ax.set_aspect("equal", adjustable="datalim")
         ax.grid(True)
 
         self.canvas.draw()
@@ -216,6 +237,11 @@ class OverviewPage(QWidget):
         if not all(v == v for v in [x0, y0, x1, y1]):
             return
 
+        plot_kwargs = {}
+
+        if CARTOPY_AVAILABLE:
+            plot_kwargs["transform"] = ccrs.PlateCarree()
+
         ax.plot(
             [x0, x1],
             [y0, y1],
@@ -223,6 +249,7 @@ class OverviewPage(QWidget):
             alpha=alpha,
             linestyle=linestyle,
             zorder=zorder,
+            **plot_kwargs,
         )
 
     def _on_map_click(self, event) -> None:
