@@ -11,14 +11,11 @@ class MLSurrogateModule(BaseResearchModule):
     id = "ml_surrogate"
     name = "ML Surrogate"
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._page: MLSurrogatePage | None = None
-
     def set_network(self, network: pypsa.Network | None) -> None:
+        # Only store the network in the module.
+        # Do not try to update a previously created page,
+        # because that page may already have been deleted by Qt.
         super().set_network(network)
-        if self._page is not None:
-            self._page.set_network(network)
 
     def get_pages(self) -> list[ModulePageDefinition]:
         return [
@@ -30,12 +27,17 @@ class MLSurrogateModule(BaseResearchModule):
             )
         ]
 
-    def create_page(self, page_key: str, parent: QWidget | None = None) -> QWidget:
+    def create_page(
+        self,
+        page_key: str,
+        parent: QWidget | None = None,
+    ) -> QWidget:
         if page_key != "ml_surrogate":
-            raise ValueError(f"Unknown page key for {self.name}: {page_key}")
+            raise ValueError(
+                f"Unknown page key for {self.name}: {page_key}"
+            )
 
-        if self._page is None:
-            self._page = MLSurrogatePage(parent)
-            self._page.set_network(self.network)
-
-        return self._page
+        # Always create a fresh widget.
+        page = MLSurrogatePage(parent)
+        page.set_network(self.network)
+        return page

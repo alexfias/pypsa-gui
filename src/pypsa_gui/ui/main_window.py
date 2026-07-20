@@ -329,17 +329,29 @@ class MainWindow(QMainWindow):
                 }
             )
             self._refresh_research_modules()
+
+            # Explicitly tell all newly created pages that no network exists.
+            self.central_panel.set_network(None)
+
             self._rebuild_navigation_tree()
             self.setWindowTitle("pypsa-gui")
             self._refresh_loaded_networks_dock()
             return
 
-        self.central_panel.rebuild_pages(session.view_options.enabled_sections)
+        # Rebuild the pages for the selected network/session.
+        self.central_panel.rebuild_pages(
+            session.view_options.enabled_sections
+        )
+
+        # Rebuild research-module pages.
         self._refresh_research_modules()
-        self.central_panel.update_network_dependent_pages(session.network)
+
+        # Important: apply the network after all pages have been recreated.
+        self.central_panel.set_network(session.network)
+
         self._rebuild_navigation_tree()
 
-        self.log("Network loaded successfully.")
+        self.log(f"Switched to network: {session.name}")
         self.log(
             f"Network summary: "
             f"{len(session.network.buses)} buses, "
@@ -350,9 +362,13 @@ class MainWindow(QMainWindow):
         )
 
         if session.source_path is not None:
-            self.setWindowTitle(f"pypsa-gui - {session.source_path.name}")
+            self.setWindowTitle(
+                f"pypsa-gui - {session.source_path.name}"
+            )
         else:
-            self.setWindowTitle(f"pypsa-gui - {session.name}")
+            self.setWindowTitle(
+                f"pypsa-gui - {session.name}"
+            )
 
         self._refresh_loaded_networks_dock()
 

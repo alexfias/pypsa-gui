@@ -86,6 +86,7 @@ class CentralPanel(QWidget):
         self.enabled_sections = set(enabled_sections)
         self._clear_pages()
 
+        # Only recreate core pages here.
         for page_name, factory in self._core_page_factories.items():
             section_key = PAGE_TO_SECTION.get(page_name)
             if section_key not in self.enabled_sections:
@@ -93,16 +94,20 @@ class CentralPanel(QWidget):
 
             self._add_page(page_name, factory())
 
-        for page_name, widget in self._module_pages.items():
-            self._add_page(page_name, widget)
+        # Do not re-add self._module_pages here.
+        # MainWindow._refresh_research_modules() creates fresh module pages.
 
     def _clear_pages(self) -> None:
-        self.pages.clear()
-
         while self.stack.count():
             widget = self.stack.widget(0)
             self.stack.removeWidget(widget)
             widget.setParent(None)
+            widget.deleteLater()
+
+        self.pages.clear()
+
+        # Remove references to module widgets that have just been deleted.
+        self._module_pages.clear()
 
     def _add_page(self, name: str, widget: QWidget) -> None:
         self.pages[name] = widget
@@ -112,12 +117,13 @@ class CentralPanel(QWidget):
             widget.open_component_requested.connect(
                 self.open_component_from_overview
             )
-            
+
     def clear_module_pages(self) -> None:
-        for page_name, widget in self._module_pages.items():
+        for page_name, widget in list(self._module_pages.items()):
             if self.pages.get(page_name) is widget:
                 self.stack.removeWidget(widget)
                 self.pages.pop(page_name, None)
+                widget.setParent(None)
                 widget.deleteLater()
 
         self._module_pages.clear()
