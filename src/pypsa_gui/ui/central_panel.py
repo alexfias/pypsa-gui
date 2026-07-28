@@ -19,7 +19,7 @@ from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
 from pypsa_gui.ui.pages.congestion_page import CongestionPage
 from pypsa_gui.ui.pages.run.solver_settings_page import SolverSettingsPage
 from pypsa_gui.ui.pages.time_series_page import TimeSeriesPage
-
+from pypsa_gui.ui.pages.scenario_builder_page import ScenarioBuilderPage
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -80,6 +80,7 @@ class CentralPanel(QWidget):
             "Optimisation": OptimisationPage,
             "Solver Settings": SolverSettingsPage,
             "Pre-Run Tools": PreRunToolsPage,
+            "Scenario Builder": ScenarioBuilderPage,
         }
 
     def rebuild_pages(self, enabled_sections: set[str]) -> None:

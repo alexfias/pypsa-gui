@@ -39,6 +39,7 @@ NAVIGATION_STRUCTURE: dict[str, list[str]] = {
         "Optimisation",
         "Solver Settings",
         "Pre-Run Tools",
+        "Scenario Builder",
     ],
     "research_modules": [],
 }
@@ -74,6 +75,7 @@ PAGE_TO_SECTION: dict[str, str] = {
     "Optimisation": "run",
     "Solver Settings": "run",
     "Pre-Run Tools": "run",
+    "Scenario Builder": "run",
 }
 
 
