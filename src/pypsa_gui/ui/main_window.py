@@ -35,6 +35,7 @@ from pypsa_gui.services.network_io import (
 )
 from pypsa_gui.services.network_store import NetworkStore
 from pypsa_gui.services.optimisation import OptimisationRunner
+from pypsa_gui.services.scenario_builder import build_scenario_network
 from pypsa_gui.ui.central_panel import CentralPanel
 from pypsa_gui.workers.optimisation_worker import OptimisationWorker
 from pypsa_gui.ui.dialogs.workspace_selection_dialog import (
@@ -156,6 +157,11 @@ class MainWindow(QMainWindow):
 
     def _create_central_widget(self) -> None:
         self.central_panel = CentralPanel(parent=self)
+
+        self.central_panel.scenario_requested.connect(
+            self.on_scenario_requested
+        )
+
         self.setCentralWidget(self.central_panel)
 
     def _create_navigation_dock(self) -> None:
@@ -689,3 +695,38 @@ class MainWindow(QMainWindow):
             workspace_name=dialog.selected_workspace_name(),
             enabled_sections=dialog.selected_enabled_sections(),
         )
+
+    def on_scenario_requested(self, definition: dict) -> None:
+        self.log("Scenario request received")
+        self.log(str(definition))
+
+        try:
+            network = build_scenario_network(
+                countries=definition["countries"],
+                scenario=definition["scenario"],
+            )
+
+            self._add_network_session(
+                network=network,
+                source_path=None,
+                view_options=SessionViewOptions(
+                    workspace_name="Scenario",
+                    enabled_sections={
+                        "overview",
+                        "components",
+                        "analysis",
+                        "plots",
+                        "run",
+                        "research_modules",
+                    },
+                ),
+                name=definition["name"],
+            )
+
+        except Exception as e:
+            self.log(str(e))
+            QMessageBox.critical(
+                self,
+                "Scenario Builder",
+                str(e),
+            )

@@ -2,24 +2,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from pypsa_gui.models.session_view import PAGE_TO_SECTION
+from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
+from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.buses_page import BusesPage
+from pypsa_gui.ui.pages.capacities_page import CapacitiesPage
 from pypsa_gui.ui.pages.component_page import ComponentPage
+from pypsa_gui.ui.pages.congestion_page import CongestionPage
+from pypsa_gui.ui.pages.emissions_page import EmissionsPage
 from pypsa_gui.ui.pages.network_map_page import NetworkMapPage
 from pypsa_gui.ui.pages.optimisation_page import OptimisationPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
-from pypsa_gui.ui.pages.capacities_page import CapacitiesPage
-from pypsa_gui.ui.pages.summary_page import SummaryPage
-from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
-from pypsa_gui.ui.pages.emissions_page import EmissionsPage
-from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
-from pypsa_gui.ui.pages.congestion_page import CongestionPage
 from pypsa_gui.ui.pages.run.solver_settings_page import SolverSettingsPage
-from pypsa_gui.ui.pages.time_series_page import TimeSeriesPage
 from pypsa_gui.ui.pages.scenario_builder_page import ScenarioBuilderPage
+from pypsa_gui.ui.pages.summary_page import SummaryPage
+from pypsa_gui.ui.pages.time_series_page import TimeSeriesPage
+
 
 class PlaceholderPage(QWidget):
     def __init__(self, title: str) -> None:
@@ -31,6 +33,8 @@ class PlaceholderPage(QWidget):
 
 
 class CentralPanel(QWidget):
+    scenario_requested = Signal(dict)
+
     def __init__(
         self,
         enabled_sections: set[str] | None = None,
@@ -68,7 +72,9 @@ class CentralPanel(QWidget):
             "Links": lambda: ComponentPage("links"),
             "Stores": lambda: ComponentPage("stores"),
             "Storage Units": lambda: ComponentPage("storage_units"),
-            "Global Constraints": lambda: ComponentPage("global_constraints"),
+            "Global Constraints": lambda: ComponentPage(
+                "global_constraints"
+            ),
             "Prices": PricesPage,
             "Congestion": CongestionPage,
             "Storage": StoragePage,
@@ -90,6 +96,7 @@ class CentralPanel(QWidget):
         # Only recreate core pages here.
         for page_name, factory in self._core_page_factories.items():
             section_key = PAGE_TO_SECTION.get(page_name)
+
             if section_key not in self.enabled_sections:
                 continue
 
@@ -119,6 +126,14 @@ class CentralPanel(QWidget):
                 self.open_component_from_overview
             )
 
+        if name == "Scenario Builder" and isinstance(
+            widget,
+            ScenarioBuilderPage,
+        ):
+            widget.scenario_requested.connect(
+                self.scenario_requested.emit
+            )
+
     def clear_module_pages(self) -> None:
         for page_name, widget in list(self._module_pages.items()):
             if self.pages.get(page_name) is widget:
@@ -138,6 +153,7 @@ class CentralPanel(QWidget):
 
     def set_current_page(self, name: str) -> None:
         widget = self.pages.get(name)
+
         if widget is not None:
             self.stack.setCurrentWidget(widget)
 
@@ -156,8 +172,11 @@ class CentralPanel(QWidget):
     def set_network(self, network) -> None:
         self.update_network_dependent_pages(network)
 
-
-    def open_component_from_overview(self, component_type: str, bus_name: str) -> None:
+    def open_component_from_overview(
+        self,
+        component_type: str,
+        bus_name: str,
+    ) -> None:
         page_name_by_component = {
             "buses": "Buses",
             "generators": "Generators",
@@ -167,11 +186,13 @@ class CentralPanel(QWidget):
         }
 
         page_name = page_name_by_component.get(component_type)
+
         if page_name is None:
             return
 
         self.show_page(page_name)
 
         page = self.pages.get(page_name)
+
         if page is not None and hasattr(page, "filter_by_bus"):
             page.filter_by_bus(bus_name)

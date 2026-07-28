@@ -36,6 +36,11 @@ pypsa-gui = "pypsa_gui.main:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.package-data]
+pypsa_gui = [
+  "data/teaching/*.nc",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
