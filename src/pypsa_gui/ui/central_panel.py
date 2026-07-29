@@ -34,6 +34,7 @@ class PlaceholderPage(QWidget):
 
 class CentralPanel(QWidget):
     scenario_requested = Signal(dict)
+    run_optimisation_requested = Signal()
 
     def __init__(
         self,
@@ -53,6 +54,7 @@ class CentralPanel(QWidget):
 
         self.stack = QStackedWidget()
         self.pages: dict[str, QWidget] = {}
+
         self._core_page_factories = self._build_page_factories()
         self._module_pages: dict[str, QWidget] = {}
 
@@ -61,7 +63,9 @@ class CentralPanel(QWidget):
 
         self.rebuild_pages(self.enabled_sections)
 
-    def _build_page_factories(self) -> dict[str, Callable[[], QWidget]]:
+    def _build_page_factories(
+        self,
+    ) -> dict[str, Callable[[], QWidget]]:
         return {
             "Overview": OverviewPage,
             "Summary": SummaryPage,
@@ -89,78 +93,117 @@ class CentralPanel(QWidget):
             "Scenario Builder": ScenarioBuilderPage,
         }
 
-    def rebuild_pages(self, enabled_sections: set[str]) -> None:
+    def rebuild_pages(
+        self,
+        enabled_sections: set[str],
+    ) -> None:
         self.enabled_sections = set(enabled_sections)
         self._clear_pages()
 
-        # Only recreate core pages here.
         for page_name, factory in self._core_page_factories.items():
             section_key = PAGE_TO_SECTION.get(page_name)
 
             if section_key not in self.enabled_sections:
                 continue
 
-            self._add_page(page_name, factory())
+            self._add_page(
+                page_name,
+                factory(),
+            )
 
-        # Do not re-add self._module_pages here.
-        # MainWindow._refresh_research_modules() creates fresh module pages.
+        # Research-module pages are recreated separately by MainWindow.
 
     def _clear_pages(self) -> None:
         while self.stack.count():
             widget = self.stack.widget(0)
+
             self.stack.removeWidget(widget)
             widget.setParent(None)
             widget.deleteLater()
 
         self.pages.clear()
-
-        # Remove references to module widgets that have just been deleted.
         self._module_pages.clear()
 
-    def _add_page(self, name: str, widget: QWidget) -> None:
+    def _add_page(
+        self,
+        name: str,
+        widget: QWidget,
+    ) -> None:
         self.pages[name] = widget
         self.stack.addWidget(widget)
 
-        if name == "Overview" and isinstance(widget, OverviewPage):
+        if (
+            name == "Overview"
+            and isinstance(widget, OverviewPage)
+        ):
             widget.open_component_requested.connect(
                 self.open_component_from_overview
             )
 
-        if name == "Scenario Builder" and isinstance(
-            widget,
-            ScenarioBuilderPage,
+        if (
+            name == "Scenario Builder"
+            and isinstance(widget, ScenarioBuilderPage)
         ):
             widget.scenario_requested.connect(
                 self.scenario_requested.emit
             )
 
+        if (
+            name == "Optimisation"
+            and isinstance(widget, OptimisationPage)
+        ):
+            widget.run_optimisation_requested.connect(
+                self.run_optimisation_requested.emit
+            )
+
     def clear_module_pages(self) -> None:
-        for page_name, widget in list(self._module_pages.items()):
-            if self.pages.get(page_name) is widget:
-                self.stack.removeWidget(widget)
-                self.pages.pop(page_name, None)
-                widget.setParent(None)
-                widget.deleteLater()
+        for page_name, widget in list(
+            self._module_pages.items()
+        ):
+            if self.pages.get(page_name) is not widget:
+                continue
+
+            self.stack.removeWidget(widget)
+            self.pages.pop(page_name, None)
+
+            widget.setParent(None)
+            widget.deleteLater()
 
         self._module_pages.clear()
 
-    def add_module_page(self, name: str, widget: QWidget) -> None:
+    def add_module_page(
+        self,
+        name: str,
+        widget: QWidget,
+    ) -> None:
         if name in self.pages:
             return
 
         self._module_pages[name] = widget
-        self._add_page(name, widget)
+        self._add_page(
+            name,
+            widget,
+        )
 
-    def set_current_page(self, name: str) -> None:
+    def set_current_page(
+        self,
+        name: str,
+    ) -> None:
         widget = self.pages.get(name)
 
         if widget is not None:
             self.stack.setCurrentWidget(widget)
 
-    def show_page(self, name: str) -> None:
+    def show_page(
+        self,
+        name: str,
+    ) -> None:
         self.set_current_page(name)
 
-    def update_network_dependent_pages(self, network) -> None:
+    def update_network_dependent_pages(
+        self,
+        network,
+    ) -> None:
         for page in self.pages.values():
             if hasattr(page, "set_network"):
                 page.set_network(network)
@@ -169,8 +212,39 @@ class CentralPanel(QWidget):
             elif hasattr(page, "update_summary"):
                 page.update_summary(network)
 
-    def set_network(self, network) -> None:
+    def set_network(
+        self,
+        network,
+    ) -> None:
         self.update_network_dependent_pages(network)
+
+    def refresh_optimisation_results_state(
+        self,
+    ) -> None:
+        """
+        Refresh the Optimisation page after a solve completed.
+
+        This enables the PDF report button when solved results are
+        available on the currently assigned network.
+        """
+
+        page = self.pages.get("Optimisation")
+
+        if isinstance(page, OptimisationPage):
+            page.refresh_results_state()
+
+    def set_optimisation_running(
+        self,
+        running: bool,
+    ) -> None:
+        """
+        Update the Optimisation page while a solve is running.
+        """
+
+        page = self.pages.get("Optimisation")
+
+        if isinstance(page, OptimisationPage):
+            page.set_optimisation_running(running)
 
     def open_component_from_overview(
         self,
@@ -185,7 +259,9 @@ class CentralPanel(QWidget):
             "links": "Links",
         }
 
-        page_name = page_name_by_component.get(component_type)
+        page_name = page_name_by_component.get(
+            component_type
+        )
 
         if page_name is None:
             return
@@ -194,5 +270,8 @@ class CentralPanel(QWidget):
 
         page = self.pages.get(page_name)
 
-        if page is not None and hasattr(page, "filter_by_bus"):
+        if (
+            page is not None
+            and hasattr(page, "filter_by_bus")
+        ):
             page.filter_by_bus(bus_name)
