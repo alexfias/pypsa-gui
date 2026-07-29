@@ -98,26 +98,10 @@ TECHNOLOGY_CARRIERS: dict[str, set[str]] = {
 
 
 COMPONENT_TECHNOLOGY_SPECS = (
-    (
-        "Generator",
-        "generators",
-        "p_nom_extendable",
-    ),
-    (
-        "StorageUnit",
-        "storage_units",
-        "p_nom_extendable",
-    ),
-    (
-        "Store",
-        "stores",
-        "e_nom_extendable",
-    ),
-    (
-        "Link",
-        "links",
-        "p_nom_extendable",
-    ),
+    ("Generator", "generators"),
+    ("StorageUnit", "storage_units"),
+    ("Store", "stores"),
+    ("Link", "links"),
 )
 
 
@@ -321,7 +305,6 @@ def build_scenario_network(
         "scenario_builder_technologies": {
             technology: {
                 "enabled": settings.enabled,
-                "allow_expansion": settings.allow_expansion,
                 "capital_cost_multiplier": (
                     settings.capital_cost_multiplier
                 ),
@@ -1090,7 +1073,6 @@ def _configure_technology(
     for (
         component_name,
         table_name,
-        extendable_column,
     ) in COMPONENT_TECHNOLOGY_SPECS:
         table = getattr(
             network,
@@ -1127,14 +1109,6 @@ def _configure_technology(
                 names=matching_names,
             )
             continue
-
-        if extendable_column in table.columns:
-            table.loc[
-                carrier_mask,
-                extendable_column,
-            ] = bool(
-                settings.allow_expansion
-            )
 
         if "capital_cost" in table.columns:
             table.loc[
@@ -1173,7 +1147,6 @@ def _apply_technology_cost_multiplier(
 ) -> None:
     settings = TechnologySettings(
         enabled=True,
-        allow_expansion=True,
         capital_cost_multiplier=capital_cost_multiplier,
         marginal_cost_multiplier=marginal_cost_multiplier,
     )

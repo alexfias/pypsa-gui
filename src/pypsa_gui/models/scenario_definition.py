@@ -20,7 +20,6 @@ class CO2Policy:
 @dataclass(frozen=True)
 class TechnologySettings:
     enabled: bool = True
-    allow_expansion: bool = True
     capital_cost_multiplier: float = 1.0
     marginal_cost_multiplier: float = 1.0
 

@@ -564,11 +564,6 @@ class ScenarioBuilderPage(QWidget):
                 enabled=self.technology_enabled_boxes[
                     key
                 ].isChecked(),
-                allow_expansion=(
-                    self.technology_expansion_boxes[
-                        key
-                    ].isChecked()
-                ),
                 capital_cost_multiplier=(
                     self.technology_capital_cost_spins[
                         key
