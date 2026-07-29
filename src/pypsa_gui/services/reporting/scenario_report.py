@@ -45,6 +45,10 @@ class ScenarioReportMetrics:
     renewable_generation_mwh: float
     renewable_share_percent: float | None
     emissions_tonnes: float | None
+    average_electricity_price_eur_per_mwh: float | None
+    minimum_electricity_price_eur_per_mwh: float | None
+    maximum_electricity_price_eur_per_mwh: float | None
+    electricity_price_standard_deviation_eur_per_mwh: float | None
     generator_capacity_mw: pd.Series
     annual_generation_mwh: pd.Series
     storage_power_capacity_mw: pd.Series
@@ -145,6 +149,13 @@ def generate_scenario_report(
         )
     )
 
+    story.extend(
+        _build_market_statistics_section(
+            metrics=metrics,
+            styles=styles,
+        )
+    )
+
     story.append(PageBreak())
 
     story.extend(
@@ -223,6 +234,16 @@ def _calculate_metrics(
     else:
         renewable_share_percent = None
 
+    (
+        average_electricity_price,
+        minimum_electricity_price,
+        maximum_electricity_price,
+        electricity_price_standard_deviation,
+    ) = _electricity_price_statistics(
+        network=network,
+        snapshot_weights=weights,
+    )
+
     return ScenarioReportMetrics(
         objective_eur=_network_objective(network),
         demand_mwh=demand_mwh,
@@ -232,6 +253,18 @@ def _calculate_metrics(
         emissions_tonnes=_annual_generator_emissions(
             network=network,
             weights=weights,
+        ),
+        average_electricity_price_eur_per_mwh=(
+            average_electricity_price
+        ),
+        minimum_electricity_price_eur_per_mwh=(
+            minimum_electricity_price
+        ),
+        maximum_electricity_price_eur_per_mwh=(
+            maximum_electricity_price
+        ),
+        electricity_price_standard_deviation_eur_per_mwh=(
+            electricity_price_standard_deviation
         ),
         generator_capacity_mw=_generator_capacity_by_carrier(
             network
@@ -531,6 +564,269 @@ def _storage_energy_capacity(
     )
 
     return result[result.abs() > 1e-6]
+
+
+def _electricity_price_statistics(
+    network: pypsa.Network,
+    snapshot_weights: pd.Series,
+) -> tuple[
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+]:
+    """
+    Return load-weighted electricity-price statistics in EUR/MWh.
+
+    Prices are taken from ``network.buses_t.marginal_price``. Only buses
+    serving electricity demand are included, which prevents hydrogen or
+    other auxiliary-bus prices from entering the statistics.
+
+    The average and standard deviation are weighted by electricity demand
+    and snapshot weighting. The minimum and maximum are the observed prices
+    during periods with positive demand at those buses.
+    """
+
+    buses_t = getattr(
+        network,
+        "buses_t",
+        None,
+    )
+
+    if buses_t is None:
+        return None, None, None, None
+
+    marginal_prices = getattr(
+        buses_t,
+        "marginal_price",
+        None,
+    )
+
+    if marginal_prices is None or marginal_prices.empty:
+        return None, None, None, None
+
+    marginal_prices = (
+        marginal_prices
+        .reindex(index=network.snapshots)
+        .apply(
+            pd.to_numeric,
+            errors="coerce",
+        )
+    )
+
+    load_by_bus = _electricity_load_by_bus(
+        network=network,
+    )
+
+    if load_by_bus.empty:
+        return None, None, None, None
+
+    common_buses = marginal_prices.columns.intersection(
+        load_by_bus.columns
+    )
+
+    if common_buses.empty:
+        return None, None, None, None
+
+    prices = marginal_prices.loc[
+        :,
+        common_buses,
+    ]
+
+    loads = load_by_bus.loc[
+        :,
+        common_buses,
+    ].clip(lower=0.0)
+
+    weighted_load = loads.multiply(
+        snapshot_weights,
+        axis=0,
+    )
+
+    valid = (
+        prices.notna()
+        & weighted_load.gt(0.0)
+    )
+
+    total_weight = float(
+        weighted_load.where(valid)
+        .sum()
+        .sum()
+    )
+
+    if total_weight <= 0.0:
+        return None, None, None, None
+
+    weighted_price_sum = float(
+        (
+            prices
+            * weighted_load
+        )
+        .where(valid)
+        .sum()
+        .sum()
+    )
+
+    average_price = (
+        weighted_price_sum
+        / total_weight
+    )
+
+    squared_deviation = (
+        prices
+        - average_price
+    ) ** 2
+
+    variance = float(
+        (
+            squared_deviation
+            * weighted_load
+        )
+        .where(valid)
+        .sum()
+        .sum()
+        / total_weight
+    )
+
+    standard_deviation = (
+        max(
+            variance,
+            0.0,
+        )
+        ** 0.5
+    )
+
+    valid_prices = prices.where(
+        valid
+    ).stack()
+
+    if valid_prices.empty:
+        return None, None, None, None
+
+    return (
+        float(average_price),
+        float(valid_prices.min()),
+        float(valid_prices.max()),
+        float(standard_deviation),
+    )
+
+
+def _electricity_load_by_bus(
+    network: pypsa.Network,
+) -> pd.DataFrame:
+    """
+    Return electricity demand indexed by snapshot and grouped by bus.
+    """
+
+    if (
+        network.loads.empty
+        or "bus" not in network.loads.columns
+    ):
+        return pd.DataFrame(
+            index=network.snapshots
+        )
+
+    load_buses = (
+        network.loads["bus"]
+        .fillna("")
+        .astype(str)
+    )
+
+    valid_loads = load_buses.ne("")
+
+    if not valid_loads.any():
+        return pd.DataFrame(
+            index=network.snapshots
+        )
+
+    load_names = network.loads.index[
+        valid_loads
+    ]
+
+    loads_t = getattr(
+        network,
+        "loads_t",
+        None,
+    )
+
+    load_values = None
+
+    if loads_t is not None:
+        p_set = getattr(
+            loads_t,
+            "p_set",
+            None,
+        )
+
+        if p_set is not None and not p_set.empty:
+            load_values = (
+                p_set
+                .reindex(
+                    index=network.snapshots,
+                    columns=load_names,
+                )
+                .apply(
+                    pd.to_numeric,
+                    errors="coerce",
+                )
+                .fillna(0.0)
+            )
+        else:
+            p = getattr(
+                loads_t,
+                "p",
+                None,
+            )
+
+            if p is not None and not p.empty:
+                load_values = (
+                    p
+                    .reindex(
+                        index=network.snapshots,
+                        columns=load_names,
+                    )
+                    .apply(
+                        pd.to_numeric,
+                        errors="coerce",
+                    )
+                    .fillna(0.0)
+                )
+
+    if load_values is None:
+        if "p_set" not in network.loads.columns:
+            return pd.DataFrame(
+                index=network.snapshots
+            )
+
+        static_loads = (
+            pd.to_numeric(
+                network.loads.loc[
+                    load_names,
+                    "p_set",
+                ],
+                errors="coerce",
+            )
+            .fillna(0.0)
+        )
+
+        load_values = pd.DataFrame(
+            [static_loads.to_numpy()] * len(network.snapshots),
+            index=network.snapshots,
+            columns=load_names,
+        )
+
+    bus_mapping = load_buses.reindex(
+        load_values.columns
+    )
+
+    grouped = (
+        load_values.T
+        .groupby(bus_mapping)
+        .sum()
+        .T
+    )
+
+    return grouped
 
 
 def _annual_generator_emissions(
@@ -1265,6 +1561,62 @@ def _build_key_results_section(
     ]
 
 
+def _build_market_statistics_section(
+    metrics: ScenarioReportMetrics,
+    styles: dict[str, ParagraphStyle],
+) -> list[Any]:
+    rows = [
+        ["Indicator", "Result"],
+        [
+            "Load-weighted average electricity price",
+            _format_electricity_price(
+                metrics.average_electricity_price_eur_per_mwh
+            ),
+        ],
+        [
+            "Minimum electricity price",
+            _format_electricity_price(
+                metrics.minimum_electricity_price_eur_per_mwh
+            ),
+        ],
+        [
+            "Maximum electricity price",
+            _format_electricity_price(
+                metrics.maximum_electricity_price_eur_per_mwh
+            ),
+        ],
+        [
+            "Load-weighted price standard deviation",
+            _format_electricity_price(
+                metrics.electricity_price_standard_deviation_eur_per_mwh
+            ),
+        ],
+    ]
+
+    return [
+        Paragraph(
+            "Electricity market statistics",
+            styles["Heading1"],
+        ),
+        Paragraph(
+            (
+                "Statistics use marginal prices at buses serving electricity "
+                "demand. The average and standard deviation are weighted by "
+                "demand and snapshot duration."
+            ),
+            styles["BodyText"],
+        ),
+        _styled_table(
+            rows,
+            column_widths=[
+                9.0 * cm,
+                7.5 * cm,
+            ],
+        ),
+        Spacer(1, 0.5 * cm),
+    ]
+
+
 def _build_capacity_section(
     metrics: ScenarioReportMetrics,
     styles: dict[str, ParagraphStyle],
@@ -1861,6 +2213,15 @@ def _format_emissions(
         return f"{value_tonnes / 1_000.0:,.2f} kt CO2"
 
     return f"{value_tonnes:,.1f} t CO2"
+
+
+def _format_electricity_price(
+    value_eur_per_mwh: float | None,
+) -> str:
+    if value_eur_per_mwh is None:
+        return "Not available"
+
+    return f"{value_eur_per_mwh:,.2f} EUR/MWh"
 
 
 def _format_percent(
