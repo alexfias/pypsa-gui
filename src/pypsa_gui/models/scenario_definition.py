@@ -7,6 +7,7 @@ from typing import Literal
 CO2PolicyMode = Literal[
     "none",
     "price",
+    "relative_cap",
     "absolute_cap",
 ]
 

@@ -28,6 +28,9 @@ BATTERY_COST_FACTOR = 0.5
 HIGH_DEMAND_FACTOR = 1.25
 HIGH_CO2_PRICE_EUR_PER_TONNE = 200.0
 
+# Demand-based reference used for relative CO2 targets.
+DEFAULT_BASELINE_CO2_INTENSITY_T_PER_MWH = 0.35
+
 
 # ------------------------------------------------------------------
 # Standard storage assumptions
@@ -376,6 +379,7 @@ def _validate_co2_policy(
     allowed_modes = {
         "none",
         "price",
+        "relative_cap",
         "absolute_cap",
     }
 
@@ -402,6 +406,15 @@ def _validate_co2_policy(
     if policy.value < 0:
         raise ValueError(
             "The CO₂ policy value cannot be negative."
+        )
+
+    if (
+        policy.mode == "relative_cap"
+        and policy.value > 100
+    ):
+        raise ValueError(
+            "The emissions reduction target must be between "
+            "0 and 100 percent."
         )
 
 
@@ -1186,6 +1199,70 @@ def _apply_co2_policy(
         )
         return
 
+    if policy.mode == "relative_cap":
+        reduction_percent = float(
+            policy.value
+        )
+
+        if not 0.0 <= reduction_percent <= 100.0:
+            raise ValueError(
+                "The emissions reduction target must be "
+                "between 0 and 100 percent."
+            )
+
+        annual_demand_mwh = (
+            _annual_electricity_demand_mwh(
+                network
+            )
+        )
+
+        estimated_baseline_emissions_mt = (
+            annual_demand_mwh
+            * DEFAULT_BASELINE_CO2_INTENSITY_T_PER_MWH
+            / 1_000_000.0
+        )
+
+        applied_cap_mt = (
+            estimated_baseline_emissions_mt
+            * (
+                1.0
+                - reduction_percent / 100.0
+            )
+        )
+
+        _apply_absolute_co2_cap(
+            network=network,
+            limit_mt_co2=applied_cap_mt,
+        )
+
+        network.meta = {
+            **dict(
+                getattr(
+                    network,
+                    "meta",
+                    {},
+                )
+                or {}
+            ),
+            "scenario_builder_co2_reduction_percent": (
+                reduction_percent
+            ),
+            "scenario_builder_co2_reference_intensity_t_per_mwh": (
+                DEFAULT_BASELINE_CO2_INTENSITY_T_PER_MWH
+            ),
+            "scenario_builder_annual_demand_mwh": (
+                annual_demand_mwh
+            ),
+            "scenario_builder_estimated_baseline_emissions_mt": (
+                estimated_baseline_emissions_mt
+            ),
+            "scenario_builder_applied_co2_cap_mt": (
+                applied_cap_mt
+            ),
+        }
+
+        return
+
     if policy.mode == "absolute_cap":
         _apply_absolute_co2_cap(
             network=network,
@@ -1196,6 +1273,126 @@ def _apply_co2_policy(
     raise ValueError(
         f"Unknown CO₂ policy mode: {policy.mode}"
     )
+
+
+def _annual_electricity_demand_mwh(
+    network: pypsa.Network,
+) -> float:
+    """
+    Return weighted annual electricity demand in MWh.
+
+    Dynamic load time series are preferred. Static load values are used as
+    a fallback when no time series are available.
+    """
+
+    snapshot_weightings = getattr(
+        network,
+        "snapshot_weightings",
+        None,
+    )
+
+    if snapshot_weightings is None:
+        weights = pd.Series(
+            1.0,
+            index=network.snapshots,
+            dtype=float,
+        )
+    elif isinstance(
+        snapshot_weightings,
+        pd.Series,
+    ):
+        weights = (
+            snapshot_weightings
+            .reindex(network.snapshots)
+            .fillna(1.0)
+            .astype(float)
+        )
+    else:
+        preferred_columns = (
+            "generators",
+            "objective",
+            "stores",
+        )
+
+        weights = None
+
+        for column in preferred_columns:
+            if column in snapshot_weightings.columns:
+                weights = (
+                    snapshot_weightings[column]
+                    .reindex(network.snapshots)
+                    .fillna(1.0)
+                    .astype(float)
+                )
+                break
+
+        if weights is None:
+            weights = pd.Series(
+                1.0,
+                index=network.snapshots,
+                dtype=float,
+            )
+
+    loads_t = getattr(
+        network,
+        "loads_t",
+        None,
+    )
+
+    if loads_t is not None:
+        p_set = getattr(
+            loads_t,
+            "p_set",
+            None,
+        )
+
+        if p_set is not None and not p_set.empty:
+            return float(
+                p_set
+                .multiply(
+                    weights,
+                    axis=0,
+                )
+                .sum()
+                .sum()
+            )
+
+        p = getattr(
+            loads_t,
+            "p",
+            None,
+        )
+
+        if p is not None and not p.empty:
+            return float(
+                p
+                .multiply(
+                    weights,
+                    axis=0,
+                )
+                .sum()
+                .sum()
+            )
+
+    if (
+        not network.loads.empty
+        and "p_set" in network.loads.columns
+    ):
+        static_demand_mw = float(
+            network.loads["p_set"]
+            .fillna(0.0)
+            .astype(float)
+            .sum()
+        )
+
+        return (
+            static_demand_mw
+            * float(
+                weights.sum()
+            )
+        )
+
+    return 0.0
 
 
 def _apply_co2_price(

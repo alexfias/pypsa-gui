@@ -718,6 +718,14 @@ def _build_scenario_section(
     network: pypsa.Network,
     styles: dict[str, ParagraphStyle],
 ) -> list[Any]:
+    """
+    Build the scenario overview and assumptions section.
+
+    Scenario Builder networks store their user-selected assumptions in
+    ``network.meta``. For networks created elsewhere, the report falls back
+    to information that can be inferred directly from the network.
+    """
+
     meta = dict(
         getattr(network, "meta", {}) or {}
     )
@@ -733,16 +741,19 @@ def _build_scenario_section(
             for country in countries
         )
     else:
-        country_text = str(countries or "Not specified")
+        country_text = str(
+            countries or "Not specified"
+        )
 
-    rows = [
+    overview_rows = [
         ["Property", "Value"],
+        ["Network name", _network_name(network)],
         ["Countries", country_text],
         [
-            "Scenario",
+            "Preset",
             str(
                 meta.get(
-                    "scenario_builder_scenario",
+                    "scenario_builder_preset",
                     "Not specified",
                 )
             ),
@@ -767,22 +778,437 @@ def _build_scenario_section(
         ],
     ]
 
-    table = _styled_table(
-        rows,
-        column_widths=[
-            5.0 * cm,
-            11.5 * cm,
-        ],
-    )
-
-    return [
+    elements: list[Any] = [
         Paragraph(
             "Scenario overview",
             styles["Heading1"],
         ),
-        table,
+        _styled_table(
+            overview_rows,
+            column_widths=[
+                5.0 * cm,
+                11.5 * cm,
+            ],
+        ),
         Spacer(1, 0.6 * cm),
     ]
+
+    if not _has_scenario_builder_metadata(meta):
+        elements.extend(
+            [
+                Paragraph(
+                    "Scenario assumptions",
+                    styles["Heading1"],
+                ),
+                Paragraph(
+                    "No Scenario Builder metadata is available for this "
+                    "network. The report therefore cannot list the original "
+                    "user-selected assumptions.",
+                    styles["BodyText"],
+                ),
+                Spacer(1, 0.6 * cm),
+            ]
+        )
+        return elements
+
+    assumption_rows = [
+        ["Assumption", "Value"],
+        [
+            "Demand multiplier",
+            _format_multiplier(
+                meta.get(
+                    "scenario_builder_demand_multiplier",
+                    1.0,
+                )
+            ),
+        ],
+        [
+            "Interconnection",
+            (
+                "Enabled"
+                if bool(
+                    meta.get(
+                        "scenario_builder_allow_interconnection",
+                        True,
+                    )
+                )
+                else "Disabled"
+            ),
+        ],
+    ]
+
+    assumption_rows.extend(
+        _co2_assumption_rows(meta)
+    )
+
+    technologies = meta.get(
+        "scenario_builder_technologies",
+        {},
+    )
+
+    if isinstance(technologies, dict):
+        enabled_technologies = []
+        disabled_technologies = []
+        modified_capital_costs = []
+        modified_marginal_costs = []
+
+        for technology, settings in technologies.items():
+            if not isinstance(settings, dict):
+                continue
+
+            display_name = _technology_display_name(
+                technology
+            )
+
+            if bool(
+                settings.get(
+                    "enabled",
+                    True,
+                )
+            ):
+                enabled_technologies.append(
+                    display_name
+                )
+            else:
+                disabled_technologies.append(
+                    display_name
+                )
+
+            capital_multiplier = _as_float(
+                settings.get(
+                    "capital_cost_multiplier",
+                    1.0,
+                )
+            )
+
+            if (
+                capital_multiplier is not None
+                and abs(capital_multiplier - 1.0) > 1e-9
+            ):
+                modified_capital_costs.append(
+                    f"{display_name}: "
+                    f"{capital_multiplier:.2f} x"
+                )
+
+            marginal_multiplier = _as_float(
+                settings.get(
+                    "marginal_cost_multiplier",
+                    1.0,
+                )
+            )
+
+            if (
+                marginal_multiplier is not None
+                and abs(marginal_multiplier - 1.0) > 1e-9
+            ):
+                modified_marginal_costs.append(
+                    f"{display_name}: "
+                    f"{marginal_multiplier:.2f} x"
+                )
+
+        assumption_rows.extend(
+            [
+                [
+                    "Enabled technologies",
+                    _join_or_default(
+                        enabled_technologies,
+                        "None",
+                    ),
+                ],
+                [
+                    "Disabled technologies",
+                    _join_or_default(
+                        disabled_technologies,
+                        "None",
+                    ),
+                ],
+                [
+                    "Modified capital costs",
+                    _join_or_default(
+                        modified_capital_costs,
+                        "No additional multipliers",
+                    ),
+                ],
+                [
+                    "Modified marginal costs",
+                    _join_or_default(
+                        modified_marginal_costs,
+                        "No additional multipliers",
+                    ),
+                ],
+            ]
+        )
+
+    if meta.get(
+        "scenario_builder_standard_battery",
+        False,
+    ):
+        assumption_rows.append(
+            [
+                "Standard battery option",
+                "Added by the Scenario Builder",
+            ]
+        )
+
+    if meta.get(
+        "scenario_builder_standard_hydrogen_storage",
+        False,
+    ):
+        assumption_rows.append(
+            [
+                "Standard hydrogen-storage option",
+                "Added by the Scenario Builder",
+            ]
+        )
+
+    assumption_rows.append(
+        [
+            "Capacity expansion",
+            (
+                "Existing p_nom_extendable and e_nom_extendable "
+                "settings from the source network were preserved."
+            ),
+        ]
+    )
+
+    elements.extend(
+        [
+            Paragraph(
+                "Scenario assumptions",
+                styles["Heading1"],
+            ),
+            _styled_table(
+                assumption_rows,
+                column_widths=[
+                    5.0 * cm,
+                    11.5 * cm,
+                ],
+            ),
+            Spacer(1, 0.6 * cm),
+        ]
+    )
+
+    return elements
+
+
+def _has_scenario_builder_metadata(
+    meta: dict[str, Any],
+) -> bool:
+    return any(
+        str(key).startswith(
+            "scenario_builder_"
+        )
+        for key in meta
+    )
+
+
+def _co2_assumption_rows(
+    meta: dict[str, Any],
+) -> list[list[str]]:
+    mode = str(
+        meta.get(
+            "scenario_builder_co2_mode",
+            "none",
+        )
+    )
+
+    value = _as_float(
+        meta.get(
+            "scenario_builder_co2_value"
+        )
+    )
+
+    if mode == "none":
+        return [
+            [
+                "CO2 policy",
+                "No additional explicit CO2 policy",
+            ]
+        ]
+
+    if mode == "price":
+        return [
+            [
+                "CO2 policy",
+                (
+                    "CO2 price"
+                    if value is None
+                    else f"CO2 price: {value:,.1f} EUR/tCO2"
+                ),
+            ]
+        ]
+
+    if mode == "relative_cap":
+        rows = [
+            [
+                "CO2 policy",
+                (
+                    "Demand-based emissions reduction target"
+                    if value is None
+                    else (
+                        "Demand-based emissions reduction target: "
+                        f"{value:,.0f}%"
+                    )
+                ),
+            ]
+        ]
+
+        reference_intensity = _as_float(
+            meta.get(
+                "scenario_builder_co2_reference_intensity_t_per_mwh"
+            )
+        )
+
+        if reference_intensity is not None:
+            rows.append(
+                [
+                    "Reference emissions intensity",
+                    f"{reference_intensity:,.3f} tCO2/MWh",
+                ]
+            )
+
+        annual_demand = _as_float(
+            meta.get(
+                "scenario_builder_annual_demand_mwh"
+            )
+        )
+
+        if annual_demand is not None:
+            rows.append(
+                [
+                    "Demand used for cap estimate",
+                    _format_energy(
+                        annual_demand
+                    ),
+                ]
+            )
+
+        baseline_emissions = _as_float(
+            meta.get(
+                "scenario_builder_estimated_baseline_emissions_mt"
+            )
+        )
+
+        if baseline_emissions is not None:
+            rows.append(
+                [
+                    "Estimated reference emissions",
+                    f"{baseline_emissions:,.2f} Mt CO2",
+                ]
+            )
+
+        applied_cap = _as_float(
+            meta.get(
+                "scenario_builder_applied_co2_cap_mt"
+            )
+        )
+
+        if applied_cap is not None:
+            rows.append(
+                [
+                    "Applied absolute CO2 cap",
+                    f"{applied_cap:,.2f} Mt CO2",
+                ]
+            )
+
+        rows.append(
+            [
+                "CO2-reference note",
+                (
+                    "The reference is a demand-based estimate, not observed "
+                    "or modelled historical emissions."
+                ),
+            ]
+        )
+
+        return rows
+
+    if mode == "absolute_cap":
+        return [
+            [
+                "CO2 policy",
+                (
+                    "Absolute annual CO2 cap"
+                    if value is None
+                    else (
+                        "Absolute annual CO2 cap: "
+                        f"{value:,.2f} Mt CO2"
+                    )
+                ),
+            ]
+        ]
+
+    return [
+        [
+            "CO2 policy",
+            (
+                mode
+                if value is None
+                else f"{mode}: {value:,.2f}"
+            ),
+        ]
+    ]
+
+
+def _technology_display_name(
+    technology: object,
+) -> str:
+    names = {
+        "solar": "Solar PV",
+        "onshore_wind": "Onshore wind",
+        "offshore_wind": "Offshore wind",
+        "gas": "Gas generation",
+        "coal": "Coal and lignite",
+        "nuclear": "Nuclear",
+        "hydro": "Hydro",
+        "battery": "Battery storage",
+        "hydrogen": "Hydrogen storage",
+    }
+
+    key = str(
+        technology
+    )
+
+    return names.get(
+        key,
+        key.replace(
+            "_",
+            " ",
+        ).title(),
+    )
+
+
+def _as_float(
+    value: object,
+) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_multiplier(
+    value: object,
+) -> str:
+    multiplier = _as_float(value)
+
+    if multiplier is None:
+        return "Not specified"
+
+    return f"{multiplier:.2f} x"
+
+
+def _join_or_default(
+    values: list[str],
+    default: str,
+) -> str:
+    if not values:
+        return default
+
+    return ", ".join(values)
 
 
 def _build_key_results_section(

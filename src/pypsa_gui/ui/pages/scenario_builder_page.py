@@ -102,7 +102,6 @@ class ScenarioBuilderPage(QWidget):
         self.country_buttons: dict[str, QPushButton] = {}
 
         self.technology_enabled_boxes: dict[str, QCheckBox] = {}
-        self.technology_expansion_boxes: dict[str, QCheckBox] = {}
         self.technology_capital_cost_spins: dict[
             str,
             QDoubleSpinBox,
@@ -145,8 +144,7 @@ class ScenarioBuilderPage(QWidget):
 
         subtitle = QLabel(
             "Create a small multi-country PyPSA scenario and configure "
-            "its demand, climate policy, technologies, expansion options, "
-            "and investment costs."
+            "its demand, climate policy, technologies, and investment costs."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #555555;")
@@ -283,7 +281,11 @@ class ScenarioBuilderPage(QWidget):
             "price",
         )
         self.co2_policy_combo.addItem(
-            "Absolute CO₂ cap",
+            "Emissions reduction target",
+            "relative_cap",
+        )
+        self.co2_policy_combo.addItem(
+            "Advanced: Absolute CO₂ cap",
             "absolute_cap",
         )
         layout.addRow(
@@ -318,8 +320,9 @@ class ScenarioBuilderPage(QWidget):
         layout = QVBoxLayout(group)
 
         explanation = QLabel(
-            "Choose which technologies are available, whether their "
-            "capacity may expand, and how their investment costs change."
+            "Choose which technologies are available and how their "
+            "investment costs change. Existing capacity-expansion settings "
+            "from the source network are preserved."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -340,15 +343,9 @@ class ScenarioBuilderPage(QWidget):
             Qt.AlignmentFlag.AlignCenter,
         )
         grid.addWidget(
-            QLabel("<b>Allow expansion</b>"),
-            0,
-            2,
-            Qt.AlignmentFlag.AlignCenter,
-        )
-        grid.addWidget(
             QLabel("<b>Capital cost</b>"),
             0,
-            3,
+            2,
             Qt.AlignmentFlag.AlignCenter,
         )
 
@@ -360,9 +357,6 @@ class ScenarioBuilderPage(QWidget):
 
             enabled_box = QCheckBox()
             enabled_box.setChecked(True)
-
-            expansion_box = QCheckBox()
-            expansion_box.setChecked(True)
 
             capital_cost_spin = QDoubleSpinBox()
             capital_cost_spin.setRange(0.0, 10.0)
@@ -386,19 +380,12 @@ class ScenarioBuilderPage(QWidget):
                 Qt.AlignmentFlag.AlignCenter,
             )
             grid.addWidget(
-                expansion_box,
-                row,
-                2,
-                Qt.AlignmentFlag.AlignCenter,
-            )
-            grid.addWidget(
                 capital_cost_spin,
                 row,
-                3,
+                2,
             )
 
             self.technology_enabled_boxes[key] = enabled_box
-            self.technology_expansion_boxes[key] = expansion_box
             self.technology_capital_cost_spins[
                 key
             ] = capital_cost_spin
@@ -519,12 +506,6 @@ class ScenarioBuilderPage(QWidget):
                 )
             )
 
-            self.technology_expansion_boxes[
-                key
-            ].toggled.connect(
-                self._update_page
-            )
-
             self.technology_capital_cost_spins[
                 key
             ].valueChanged.connect(
@@ -642,23 +623,62 @@ class ScenarioBuilderPage(QWidget):
         )
 
         if mode == "none":
+            self.co2_value_spin.setRange(
+                0.0,
+                1_000_000.0,
+            )
+            self.co2_value_spin.setDecimals(2)
+            self.co2_value_spin.setSingleStep(10.0)
             self.co2_value_spin.setSuffix("")
             self.co2_explanation_label.setText(
                 "No additional explicit CO₂ policy is applied. "
                 "A selected preset may still modify CO₂ assumptions."
             )
+            return
 
-        elif mode == "price":
+        if mode == "price":
+            self.co2_value_spin.setRange(
+                0.0,
+                1_000.0,
+            )
+            self.co2_value_spin.setDecimals(1)
+            self.co2_value_spin.setSingleStep(10.0)
             self.co2_value_spin.setSuffix(" €/tCO₂")
             self.co2_explanation_label.setText(
                 "The value is added as a price for each tonne of CO₂ emitted."
             )
+            return
 
-        elif mode == "absolute_cap":
-            self.co2_value_spin.setSuffix(" tCO₂")
+        if mode == "relative_cap":
+            self.co2_value_spin.setRange(
+                0.0,
+                100.0,
+            )
+            self.co2_value_spin.setDecimals(0)
+            self.co2_value_spin.setSingleStep(5.0)
+            self.co2_value_spin.setSuffix(" %")
+
+            if self.co2_value_spin.value() > 100.0:
+                self.co2_value_spin.setValue(70.0)
+
             self.co2_explanation_label.setText(
-                "The value specifies the maximum total CO₂ emissions "
-                "permitted during the modelled period."
+                "The reduction target is converted into an absolute cap "
+                "using annual electricity demand and an assumed reference "
+                "intensity of 0.35 tCO₂/MWh."
+            )
+            return
+
+        if mode == "absolute_cap":
+            self.co2_value_spin.setRange(
+                0.0,
+                10_000.0,
+            )
+            self.co2_value_spin.setDecimals(2)
+            self.co2_value_spin.setSingleStep(1.0)
+            self.co2_value_spin.setSuffix(" MtCO₂")
+            self.co2_explanation_label.setText(
+                "The value specifies the absolute annual CO₂ emissions cap "
+                "in million tonnes."
             )
 
     def _on_technology_enabled_changed(
@@ -666,20 +686,9 @@ class ScenarioBuilderPage(QWidget):
         technology_key: str,
         enabled: bool,
     ) -> None:
-        expansion_box = self.technology_expansion_boxes[
+        self.technology_capital_cost_spins[
             technology_key
-        ]
-        capital_cost_spin = (
-            self.technology_capital_cost_spins[
-                technology_key
-            ]
-        )
-
-        expansion_box.setEnabled(enabled)
-        capital_cost_spin.setEnabled(enabled)
-
-        if not enabled:
-            expansion_box.setChecked(False)
+        ].setEnabled(enabled)
 
         self._update_page()
 
@@ -740,13 +749,20 @@ class ScenarioBuilderPage(QWidget):
         elif definition.co2_policy.mode == "price":
             co2_text = (
                 f"CO₂ price: "
-                f"{definition.co2_policy.value:.2f} €/tCO₂"
+                f"{definition.co2_policy.value:.1f} €/tCO₂"
+            )
+
+        elif definition.co2_policy.mode == "relative_cap":
+            co2_text = (
+                f"Emissions reduction target: "
+                f"{definition.co2_policy.value:.0f}% "
+                "(demand-based reference)"
             )
 
         else:
             co2_text = (
                 f"Absolute CO₂ cap: "
-                f"{definition.co2_policy.value:.2f} tCO₂"
+                f"{definition.co2_policy.value:.2f} MtCO₂"
             )
 
         self.preview_co2_label.setText(
