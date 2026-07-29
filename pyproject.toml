@@ -15,6 +15,7 @@ license = { text = "MIT" }
 
 dependencies = [
     "pypsa",
+    "highspy",
     "pandas",
     "PySide6",
     "matplotlib",
@@ -25,10 +26,11 @@ dependencies = [
 dev = [
   "pytest",
   "black",
-  "ruff"
+  "ruff",
 ]
+
 map = [
-  "cartopy"
+  "cartopy",
 ]
 
 [project.scripts]
