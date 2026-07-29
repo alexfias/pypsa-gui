@@ -89,7 +89,7 @@ class ScenarioBuilderPage(QWidget):
         },
     }
 
-    MIN_COUNTRIES = 2
+    MIN_COUNTRIES = 1
     MAX_COUNTRIES = 3
 
     def __init__(self, parent: QWidget | None = None) -> None:

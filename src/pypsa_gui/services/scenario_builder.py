@@ -15,12 +15,30 @@ SCENARIO_NAMES = {
     "No interconnection",
 }
 
-MIN_COUNTRIES = 2
+MIN_COUNTRIES = 1
 MAX_COUNTRIES = 3
 
 BATTERY_COST_FACTOR = 0.5
 HIGH_DEMAND_FACTOR = 1.25
 HIGH_CO2_PRICE_EUR_PER_TONNE = 200.0
+
+# ------------------------------------------------------------------
+# Standard storage assumptions
+# ------------------------------------------------------------------
+
+BATTERY_MAX_HOURS = 4.0
+BATTERY_CHARGE_EFFICIENCY = 0.95
+BATTERY_DISCHARGE_EFFICIENCY = 0.95
+BATTERY_STANDING_LOSS = 0.001
+BATTERY_CAPITAL_COST_EUR_PER_MW = 220_000.0
+
+HYDROGEN_ELECTROLYSER_EFFICIENCY = 0.70
+HYDROGEN_FUEL_CELL_EFFICIENCY = 0.50
+HYDROGEN_STORE_STANDING_LOSS = 0.0001
+
+ELECTROLYSER_CAPITAL_COST_EUR_PER_MW = 500_000.0
+FUEL_CELL_CAPITAL_COST_EUR_PER_MW = 800_000.0
+HYDROGEN_STORE_CAPITAL_COST_EUR_PER_MWH = 10_000.0
 
 
 def default_source_network_path() -> Path:
@@ -77,6 +95,9 @@ def build_scenario_network(
     """
     Extract selected countries from a PyPSA-Eur network and apply a scenario.
 
+    Standard extendable battery and hydrogen-storage options are added to
+    every selected country.
+
     Parameters
     ----------
     countries:
@@ -126,6 +147,13 @@ def build_scenario_network(
         countries=selected_countries,
     )
 
+    # Add standard storage before applying the scenario so that, for example,
+    # the "Cheap batteries" scenario also modifies the newly added batteries.
+    _add_standard_storage_options(
+        network=network,
+        countries=selected_countries,
+    )
+
     _apply_scenario(
         network=network,
         scenario=scenario,
@@ -141,6 +169,8 @@ def build_scenario_network(
         "scenario_builder_source": str(source_path),
         "scenario_builder_countries": selected_countries,
         "scenario_builder_scenario": scenario,
+        "scenario_builder_standard_battery": True,
+        "scenario_builder_standard_hydrogen_storage": True,
     }
 
     network.consistency_check()
@@ -369,6 +399,223 @@ def _extract_country_subnetwork(
         names=remove_buses,
     )
 
+
+# ------------------------------------------------------------------
+# Standard storage
+# ------------------------------------------------------------------
+
+def _add_standard_storage_options(
+    network: pypsa.Network,
+    countries: list[str],
+) -> None:
+    """
+    Add one battery and one hydrogen-storage chain per selected country.
+
+    Storage is connected to one representative electricity bus in each
+    country. Existing components with the same names are left unchanged.
+    """
+
+    for carrier in (
+        "battery",
+        "hydrogen",
+        "electrolyser",
+        "fuel cell",
+    ):
+        _ensure_carrier(
+            network=network,
+            carrier=carrier,
+        )
+
+    for country in countries:
+        electricity_bus = _representative_electricity_bus(
+            network=network,
+            country=country,
+        )
+
+        _add_battery_storage(
+            network=network,
+            country=country,
+            electricity_bus=electricity_bus,
+        )
+
+        _add_hydrogen_storage(
+            network=network,
+            country=country,
+            electricity_bus=electricity_bus,
+        )
+
+
+def _ensure_carrier(
+    network: pypsa.Network,
+    carrier: str,
+) -> None:
+    if carrier not in network.carriers.index:
+        network.add(
+            "Carrier",
+            carrier,
+        )
+
+
+def _representative_electricity_bus(
+    network: pypsa.Network,
+    country: str,
+) -> str:
+    country_mask = (
+        network.buses["country"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .eq(country)
+    )
+
+    country_buses = network.buses.loc[country_mask]
+
+    if country_buses.empty:
+        raise ValueError(
+            f"No electricity bus was found for country {country}."
+        )
+
+    # Prefer an AC bus when the source network provides bus carriers.
+    if "carrier" in country_buses.columns:
+        ac_mask = (
+            country_buses["carrier"]
+            .fillna("")
+            .astype(str)
+            .str.casefold()
+            .eq("ac")
+        )
+
+        ac_buses = country_buses.index[ac_mask]
+
+        if len(ac_buses) > 0:
+            return str(ac_buses[0])
+
+    return str(country_buses.index[0])
+
+
+def _add_battery_storage(
+    network: pypsa.Network,
+    country: str,
+    electricity_bus: str,
+) -> None:
+    """
+    Add a four-hour extendable battery StorageUnit.
+
+    StorageUnit capital cost is specified per MW of power capacity. The
+    corresponding energy capacity is determined by ``max_hours``.
+    """
+
+    name = f"{country} battery"
+
+    if name in network.storage_units.index:
+        return
+
+    network.add(
+        "StorageUnit",
+        name,
+        bus=electricity_bus,
+        carrier="battery",
+        p_nom=0.0,
+        p_nom_extendable=True,
+        max_hours=BATTERY_MAX_HOURS,
+        efficiency_store=BATTERY_CHARGE_EFFICIENCY,
+        efficiency_dispatch=BATTERY_DISCHARGE_EFFICIENCY,
+        standing_loss=BATTERY_STANDING_LOSS,
+        capital_cost=BATTERY_CAPITAL_COST_EUR_PER_MW,
+        marginal_cost=0.0,
+        cyclic_state_of_charge=True,
+    )
+
+
+def _add_hydrogen_storage(
+    network: pypsa.Network,
+    country: str,
+    electricity_bus: str,
+) -> None:
+    """
+    Add an extendable hydrogen-storage chain.
+
+    The chain consists of:
+
+    electricity bus -> electrolyser -> hydrogen bus
+    hydrogen bus -> hydrogen store
+    hydrogen bus -> fuel cell -> electricity bus
+    """
+
+    hydrogen_bus = f"{country} hydrogen"
+    electrolyser = f"{country} electrolyser"
+    hydrogen_store = f"{country} hydrogen store"
+    fuel_cell = f"{country} fuel cell"
+
+    electricity_bus_data = network.buses.loc[electricity_bus]
+
+    if hydrogen_bus not in network.buses.index:
+        bus_attributes = {
+            "carrier": "hydrogen",
+            "country": country,
+        }
+
+        # Place the hydrogen bus at the same coordinates as the selected
+        # electricity bus so that it appears sensibly on network maps.
+        for coordinate in ("x", "y"):
+            if coordinate in network.buses.columns:
+                value = electricity_bus_data.get(coordinate)
+
+                if pd.notna(value):
+                    bus_attributes[coordinate] = value
+
+        network.add(
+            "Bus",
+            hydrogen_bus,
+            **bus_attributes,
+        )
+
+    if electrolyser not in network.links.index:
+        network.add(
+            "Link",
+            electrolyser,
+            bus0=electricity_bus,
+            bus1=hydrogen_bus,
+            carrier="electrolyser",
+            p_nom=0.0,
+            p_nom_extendable=True,
+            efficiency=HYDROGEN_ELECTROLYSER_EFFICIENCY,
+            capital_cost=ELECTROLYSER_CAPITAL_COST_EUR_PER_MW,
+            marginal_cost=0.0,
+        )
+
+    if hydrogen_store not in network.stores.index:
+        network.add(
+            "Store",
+            hydrogen_store,
+            bus=hydrogen_bus,
+            carrier="hydrogen",
+            e_nom=0.0,
+            e_nom_extendable=True,
+            e_cyclic=True,
+            standing_loss=HYDROGEN_STORE_STANDING_LOSS,
+            capital_cost=HYDROGEN_STORE_CAPITAL_COST_EUR_PER_MWH,
+            marginal_cost=0.0,
+        )
+
+    if fuel_cell not in network.links.index:
+        network.add(
+            "Link",
+            fuel_cell,
+            bus0=hydrogen_bus,
+            bus1=electricity_bus,
+            carrier="fuel cell",
+            p_nom=0.0,
+            p_nom_extendable=True,
+            efficiency=HYDROGEN_FUEL_CELL_EFFICIENCY,
+            capital_cost=FUEL_CELL_CAPITAL_COST_EUR_PER_MW,
+            marginal_cost=0.0,
+        )
+
+
+# ------------------------------------------------------------------
+# Scenarios
+# ------------------------------------------------------------------
 
 def _apply_scenario(
     network: pypsa.Network,
