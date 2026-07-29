@@ -6,6 +6,12 @@ from pathlib import Path
 import pandas as pd
 import pypsa
 
+from pypsa_gui.models.scenario_definition import (
+    CO2Policy,
+    ScenarioDefinition,
+    TechnologySettings,
+)
+
 
 SCENARIO_NAMES = {
     "Reference",
@@ -21,6 +27,7 @@ MAX_COUNTRIES = 3
 BATTERY_COST_FACTOR = 0.5
 HIGH_DEMAND_FACTOR = 1.25
 HIGH_CO2_PRICE_EUR_PER_TONNE = 200.0
+
 
 # ------------------------------------------------------------------
 # Standard storage assumptions
@@ -40,6 +47,83 @@ ELECTROLYSER_CAPITAL_COST_EUR_PER_MW = 500_000.0
 FUEL_CELL_CAPITAL_COST_EUR_PER_MW = 800_000.0
 HYDROGEN_STORE_CAPITAL_COST_EUR_PER_MWH = 10_000.0
 
+
+# ------------------------------------------------------------------
+# Technology mapping
+# ------------------------------------------------------------------
+
+TECHNOLOGY_CARRIERS: dict[str, set[str]] = {
+    "solar": {
+        "solar",
+    },
+    "onshore_wind": {
+        "onwind",
+        "onshore wind",
+    },
+    "offshore_wind": {
+        "offwind",
+        "offwind-ac",
+        "offwind-dc",
+        "offshore wind",
+    },
+    "gas": {
+        "gas",
+        "ocgt",
+        "ccgt",
+    },
+    "coal": {
+        "coal",
+        "lignite",
+    },
+    "nuclear": {
+        "nuclear",
+    },
+    "hydro": {
+        "hydro",
+        "ror",
+        "phs",
+        "reservoir",
+    },
+    "battery": {
+        "battery",
+    },
+    "hydrogen": {
+        "hydrogen",
+        "h2",
+        "electrolyser",
+        "electrolyzer",
+        "fuel cell",
+    },
+}
+
+
+COMPONENT_TECHNOLOGY_SPECS = (
+    (
+        "Generator",
+        "generators",
+        "p_nom_extendable",
+    ),
+    (
+        "StorageUnit",
+        "storage_units",
+        "p_nom_extendable",
+    ),
+    (
+        "Store",
+        "stores",
+        "e_nom_extendable",
+    ),
+    (
+        "Link",
+        "links",
+        "p_nom_extendable",
+    ),
+)
+
+
+# ------------------------------------------------------------------
+# Source network
+# ------------------------------------------------------------------
 
 def default_source_network_path() -> Path:
     """
@@ -86,25 +170,31 @@ def available_countries(
     )
 
 
+# ------------------------------------------------------------------
+# Public builder
+# ------------------------------------------------------------------
+
 def build_scenario_network(
-    countries: list[str],
-    scenario: str,
+    definition: ScenarioDefinition,
     source_network_path: Path | str | None = None,
     snapshots: Iterable | None = None,
 ) -> pypsa.Network:
     """
-    Extract selected countries from a PyPSA-Eur network and apply a scenario.
+    Build a teaching scenario from the packaged PyPSA-Eur network.
 
-    Standard extendable battery and hydrogen-storage options are added to
-    every selected country.
+    The builder:
+
+    1. loads the source network;
+    2. selects the requested countries;
+    3. adds standard battery and hydrogen investment options;
+    4. applies the selected preset;
+    5. applies custom demand, technology, cost, and CO₂ settings;
+    6. optionally removes cross-border interconnections.
 
     Parameters
     ----------
-    countries:
-        Country codes selected by the user, for example
-        ``["DE", "DK", "NL"]``.
-    scenario:
-        One of the names in ``SCENARIO_NAMES``.
+    definition:
+        Complete Scenario Builder configuration.
     source_network_path:
         Optional alternative source network. When omitted, the packaged
         ``elec_s_37.nc`` network is used.
@@ -115,18 +205,28 @@ def build_scenario_network(
     Returns
     -------
     pypsa.Network
-        An unsolved network containing only the selected countries.
+        An unsolved network containing the configured scenario.
     """
 
+    _validate_definition(definition)
+
     selected_countries = _normalise_and_validate_inputs(
-        countries=countries,
-        scenario=scenario,
+        countries=list(definition.countries),
+        scenario=definition.preset,
     )
 
-    source_path = _resolve_source_path(source_network_path)
-    source = pypsa.Network(source_path)
+    source_path = _resolve_source_path(
+        source_network_path
+    )
 
-    _validate_country_column(source)
+    source = pypsa.Network(
+        source_path
+    )
+
+    _validate_country_column(
+        source
+    )
+
     _validate_selected_countries(
         source=source,
         countries=selected_countries,
@@ -147,28 +247,91 @@ def build_scenario_network(
         countries=selected_countries,
     )
 
-    # Add standard storage before applying the scenario so that, for example,
-    # the "Cheap batteries" scenario also modifies the newly added batteries.
+    # Add standard storage before applying presets and custom settings.
     _add_standard_storage_options(
         network=network,
         countries=selected_countries,
     )
 
-    _apply_scenario(
+    # Retain the existing preset behaviour.
+    _apply_preset(
         network=network,
-        scenario=scenario,
+        preset=definition.preset,
     )
 
-    network.name = _build_network_name(
-        countries=selected_countries,
-        scenario=scenario,
+    # Apply user-defined settings after the preset. This allows explicit
+    # advanced settings to modify the preset assumptions.
+    _apply_demand_multiplier(
+        network=network,
+        multiplier=definition.demand_multiplier,
+    )
+
+    _apply_technology_settings(
+        network=network,
+        settings=definition.technologies,
+    )
+
+    _apply_co2_policy(
+        network=network,
+        policy=definition.co2_policy,
+    )
+
+    if not definition.allow_interconnection:
+        _remove_cross_border_branches(
+            network
+        )
+
+    _remove_unused_non_electric_buses(
+        network
+    )
+
+    network.name = (
+        definition.name.strip()
+        or _build_network_name(
+            countries=selected_countries,
+            scenario=definition.preset,
+        )
     )
 
     network.meta = {
-        **dict(getattr(network, "meta", {}) or {}),
+        **dict(
+            getattr(
+                network,
+                "meta",
+                {},
+            )
+            or {}
+        ),
         "scenario_builder_source": str(source_path),
+        "scenario_builder_name": network.name,
         "scenario_builder_countries": selected_countries,
-        "scenario_builder_scenario": scenario,
+        "scenario_builder_preset": definition.preset,
+        "scenario_builder_co2_mode": (
+            definition.co2_policy.mode
+        ),
+        "scenario_builder_co2_value": (
+            definition.co2_policy.value
+        ),
+        "scenario_builder_demand_multiplier": (
+            definition.demand_multiplier
+        ),
+        "scenario_builder_allow_interconnection": (
+            definition.allow_interconnection
+        ),
+        "scenario_builder_technologies": {
+            technology: {
+                "enabled": settings.enabled,
+                "allow_expansion": settings.allow_expansion,
+                "capital_cost_multiplier": (
+                    settings.capital_cost_multiplier
+                ),
+                "marginal_cost_multiplier": (
+                    settings.marginal_cost_multiplier
+                ),
+            }
+            for technology, settings
+            in definition.technologies.items()
+        },
         "scenario_builder_standard_battery": True,
         "scenario_builder_standard_hydrogen_storage": True,
     }
@@ -178,15 +341,119 @@ def build_scenario_network(
     return network
 
 
+# ------------------------------------------------------------------
+# General validation
+# ------------------------------------------------------------------
+
+def _validate_definition(
+    definition: ScenarioDefinition,
+) -> None:
+    if not isinstance(
+        definition,
+        ScenarioDefinition,
+    ):
+        raise TypeError(
+            "definition must be a ScenarioDefinition instance."
+        )
+
+    if definition.demand_multiplier <= 0:
+        raise ValueError(
+            "Demand multiplier must be greater than zero."
+        )
+
+    _validate_co2_policy(
+        definition.co2_policy
+    )
+
+    for (
+        technology,
+        settings,
+    ) in definition.technologies.items():
+        if technology not in TECHNOLOGY_CARRIERS:
+            available = ", ".join(
+                sorted(
+                    TECHNOLOGY_CARRIERS
+                )
+            )
+
+            raise ValueError(
+                f"Unknown technology: {technology}. "
+                f"Available technologies are: {available}"
+            )
+
+        _validate_technology_settings(
+            technology=technology,
+            settings=settings,
+        )
+
+
+def _validate_co2_policy(
+    policy: CO2Policy,
+) -> None:
+    allowed_modes = {
+        "none",
+        "price",
+        "absolute_cap",
+    }
+
+    if policy.mode not in allowed_modes:
+        available = ", ".join(
+            sorted(
+                allowed_modes
+            )
+        )
+
+        raise ValueError(
+            f"Unknown CO₂ policy mode: {policy.mode}. "
+            f"Available modes are: {available}"
+        )
+
+    if policy.mode == "none":
+        return
+
+    if policy.value is None:
+        raise ValueError(
+            "A value is required for the selected CO₂ policy."
+        )
+
+    if policy.value < 0:
+        raise ValueError(
+            "The CO₂ policy value cannot be negative."
+        )
+
+
+def _validate_technology_settings(
+    technology: str,
+    settings: TechnologySettings,
+) -> None:
+    if settings.capital_cost_multiplier < 0:
+        raise ValueError(
+            "Capital-cost multiplier for "
+            f"{technology} cannot be negative."
+        )
+
+    if settings.marginal_cost_multiplier < 0:
+        raise ValueError(
+            "Marginal-cost multiplier for "
+            f"{technology} cannot be negative."
+        )
+
+
 def _resolve_source_path(
     source_network_path: Path | str | None,
 ) -> Path:
     if source_network_path is None:
         source_path = default_source_network_path()
     else:
-        source_path = Path(source_network_path)
+        source_path = Path(
+            source_network_path
+        )
 
-    source_path = source_path.expanduser().resolve()
+    source_path = (
+        source_path
+        .expanduser()
+        .resolve()
+    )
 
     if not source_path.exists():
         raise FileNotFoundError(
@@ -198,7 +465,8 @@ def _resolve_source_path(
 
     if not source_path.is_file():
         raise FileNotFoundError(
-            f"The Scenario Builder source path is not a file: {source_path}"
+            "The Scenario Builder source path is not a file: "
+            f"{source_path}"
         )
 
     return source_path
@@ -209,14 +477,18 @@ def _normalise_and_validate_inputs(
     scenario: str,
 ) -> list[str]:
     selected_countries = [
-        str(country).strip().upper()
+        str(country)
+        .strip()
+        .upper()
         for country in countries
         if str(country).strip()
     ]
 
-    # Remove duplicates while preserving the UI selection order.
+    # Remove duplicates while preserving UI selection order.
     selected_countries = list(
-        dict.fromkeys(selected_countries)
+        dict.fromkeys(
+            selected_countries
+        )
     )
 
     if not MIN_COUNTRIES <= len(selected_countries) <= MAX_COUNTRIES:
@@ -226,17 +498,23 @@ def _normalise_and_validate_inputs(
         )
 
     if scenario not in SCENARIO_NAMES:
-        available = ", ".join(sorted(SCENARIO_NAMES))
+        available = ", ".join(
+            sorted(
+                SCENARIO_NAMES
+            )
+        )
 
         raise ValueError(
-            f"Unknown scenario: {scenario}. "
-            f"Available scenarios are: {available}"
+            f"Unknown scenario preset: {scenario}. "
+            f"Available presets are: {available}"
         )
 
     return selected_countries
 
 
-def _validate_country_column(network: pypsa.Network) -> None:
+def _validate_country_column(
+    network: pypsa.Network,
+) -> None:
     if "country" not in network.buses.columns:
         raise ValueError(
             "The source network does not contain a "
@@ -275,10 +553,15 @@ def _validate_snapshots(
     if snapshots is None:
         return source.snapshots
 
-    selected_snapshots = pd.Index(snapshots)
+    selected_snapshots = pd.Index(
+        snapshots
+    )
 
-    missing_snapshots = selected_snapshots.difference(
-        source.snapshots
+    missing_snapshots = (
+        selected_snapshots
+        .difference(
+            source.snapshots
+        )
     )
 
     if not missing_snapshots.empty:
@@ -294,6 +577,10 @@ def _validate_snapshots(
 
     return selected_snapshots
 
+
+# ------------------------------------------------------------------
+# Country selection
+# ------------------------------------------------------------------
 
 def _extract_country_subnetwork(
     network: pypsa.Network,
@@ -314,26 +601,55 @@ def _extract_country_subnetwork(
     )
 
     selected_bus_names = network.buses.index[
-        bus_country.isin(countries)
+        bus_country.isin(
+            countries
+        )
     ]
 
-    selected_bus_set = set(selected_bus_names)
+    selected_bus_set = set(
+        selected_bus_names
+    )
 
-    # One-port components connected through a single "bus" column.
+    # One-port components connected through one bus column.
     for component_name, table_name in (
-        ("Generator", "generators"),
-        ("Load", "loads"),
-        ("StorageUnit", "storage_units"),
-        ("Store", "stores"),
-        ("ShuntImpedance", "shunt_impedances"),
+        (
+            "Generator",
+            "generators",
+        ),
+        (
+            "Load",
+            "loads",
+        ),
+        (
+            "StorageUnit",
+            "storage_units",
+        ),
+        (
+            "Store",
+            "stores",
+        ),
+        (
+            "ShuntImpedance",
+            "shunt_impedances",
+        ),
     ):
-        table = getattr(network, table_name, None)
+        table = getattr(
+            network,
+            table_name,
+            None,
+        )
 
-        if table is None or table.empty or "bus" not in table.columns:
+        if (
+            table is None
+            or table.empty
+            or "bus" not in table.columns
+        ):
             continue
 
         remove_names = table.index[
-            ~table["bus"].isin(selected_bus_set)
+            ~table["bus"].isin(
+                selected_bus_set
+            )
         ]
 
         _remove_components(
@@ -342,15 +658,26 @@ def _extract_country_subnetwork(
             names=remove_names,
         )
 
-    # Branch components may contain bus0, bus1, and potentially additional
-    # bus columns. A branch is retained only when every populated bus belongs
-    # to the selected subnetwork.
+    # Branch components can contain bus0, bus1, and additional bus columns.
     for component_name, table_name in (
-        ("Line", "lines"),
-        ("Link", "links"),
-        ("Transformer", "transformers"),
+        (
+            "Line",
+            "lines",
+        ),
+        (
+            "Link",
+            "links",
+        ),
+        (
+            "Transformer",
+            "transformers",
+        ),
     ):
-        table = getattr(network, table_name, None)
+        table = getattr(
+            network,
+            table_name,
+            None,
+        )
 
         if table is None or table.empty:
             continue
@@ -371,17 +698,25 @@ def _extract_country_subnetwork(
         )
 
         for bus_column in bus_columns:
-            bus_values = table[bus_column].fillna("").astype(str)
+            bus_values = (
+                table[bus_column]
+                .fillna("")
+                .astype(str)
+            )
 
             # Empty optional bus ports do not invalidate a component.
             port_is_valid = (
                 bus_values.eq("")
-                | bus_values.isin(selected_bus_set)
+                | bus_values.isin(
+                    selected_bus_set
+                )
             )
 
             keep_mask &= port_is_valid
 
-        remove_names = table.index[~keep_mask]
+        remove_names = table.index[
+            ~keep_mask
+        ]
 
         _remove_components(
             network=network,
@@ -390,7 +725,9 @@ def _extract_country_subnetwork(
         )
 
     remove_buses = network.buses.index[
-        ~network.buses.index.isin(selected_bus_set)
+        ~network.buses.index.isin(
+            selected_bus_set
+        )
     ]
 
     _remove_components(
@@ -468,7 +805,9 @@ def _representative_electricity_bus(
         .eq(country)
     )
 
-    country_buses = network.buses.loc[country_mask]
+    country_buses = network.buses.loc[
+        country_mask
+    ]
 
     if country_buses.empty:
         raise ValueError(
@@ -485,12 +824,18 @@ def _representative_electricity_bus(
             .eq("ac")
         )
 
-        ac_buses = country_buses.index[ac_mask]
+        ac_buses = country_buses.index[
+            ac_mask
+        ]
 
         if len(ac_buses) > 0:
-            return str(ac_buses[0])
+            return str(
+                ac_buses[0]
+            )
 
-    return str(country_buses.index[0])
+    return str(
+        country_buses.index[0]
+    )
 
 
 def _add_battery_storage(
@@ -547,7 +892,9 @@ def _add_hydrogen_storage(
     hydrogen_store = f"{country} hydrogen store"
     fuel_cell = f"{country} fuel cell"
 
-    electricity_bus_data = network.buses.loc[electricity_bus]
+    electricity_bus_data = network.buses.loc[
+        electricity_bus
+    ]
 
     if hydrogen_bus not in network.buses.index:
         bus_attributes = {
@@ -556,13 +903,20 @@ def _add_hydrogen_storage(
         }
 
         # Place the hydrogen bus at the same coordinates as the selected
-        # electricity bus so that it appears sensibly on network maps.
-        for coordinate in ("x", "y"):
-            if coordinate in network.buses.columns:
-                value = electricity_bus_data.get(coordinate)
+        # electricity bus so it appears sensibly on network maps.
+        for coordinate in (
+            "x",
+            "y",
+        ):
+            if coordinate not in network.buses.columns:
+                continue
 
-                if pd.notna(value):
-                    bus_attributes[coordinate] = value
+            value = electricity_bus_data.get(
+                coordinate
+            )
+
+            if pd.notna(value):
+                bus_attributes[coordinate] = value
 
         network.add(
             "Bus",
@@ -614,89 +968,266 @@ def _add_hydrogen_storage(
 
 
 # ------------------------------------------------------------------
-# Scenarios
+# Presets
 # ------------------------------------------------------------------
 
-def _apply_scenario(
+def _apply_preset(
     network: pypsa.Network,
-    scenario: str,
+    preset: str,
 ) -> None:
-    if scenario == "Reference":
+    if preset == "Reference":
         return
 
-    if scenario == "Cheap batteries":
-        _apply_cheap_batteries(network)
+    if preset == "Cheap batteries":
+        _apply_technology_cost_multiplier(
+            network=network,
+            carriers=TECHNOLOGY_CARRIERS["battery"],
+            capital_cost_multiplier=BATTERY_COST_FACTOR,
+            marginal_cost_multiplier=1.0,
+        )
         return
 
-    if scenario == "High CO₂ price":
-        _apply_high_co2_price(network)
+    if preset == "High CO₂ price":
+        _apply_co2_price(
+            network=network,
+            price_eur_per_tonne=(
+                HIGH_CO2_PRICE_EUR_PER_TONNE
+            ),
+        )
         return
 
-    if scenario == "High demand":
-        _apply_high_demand(network)
+    if preset == "High demand":
+        _apply_demand_multiplier(
+            network=network,
+            multiplier=HIGH_DEMAND_FACTOR,
+        )
         return
 
-    if scenario == "No interconnection":
-        _remove_cross_border_branches(network)
+    if preset == "No interconnection":
+        _remove_cross_border_branches(
+            network
+        )
         return
 
-    raise ValueError(f"Scenario is not implemented: {scenario}")
+    raise ValueError(
+        f"Scenario preset is not implemented: {preset}"
+    )
 
 
-def _apply_cheap_batteries(
+# ------------------------------------------------------------------
+# Demand
+# ------------------------------------------------------------------
+
+def _apply_demand_multiplier(
     network: pypsa.Network,
+    multiplier: float,
 ) -> None:
-    """
-    Reduce capital costs of components whose carrier contains 'battery'.
-    """
+    if multiplier <= 0:
+        raise ValueError(
+            "Demand multiplier must be greater than zero."
+        )
 
-    for table_name in (
-        "storage_units",
-        "stores",
-        "links",
+    if multiplier == 1.0:
+        return
+
+    if "p_set" in network.loads.columns:
+        network.loads["p_set"] = (
+            network.loads["p_set"]
+            .fillna(0.0)
+            .astype(float)
+            * multiplier
+        )
+
+    if (
+        hasattr(
+            network,
+            "loads_t",
+        )
+        and "p_set" in network.loads_t
+        and not network.loads_t.p_set.empty
     ):
-        table = getattr(network, table_name, None)
+        network.loads_t.p_set = (
+            network.loads_t.p_set
+            * multiplier
+        )
+
+
+# ------------------------------------------------------------------
+# Technology configuration
+# ------------------------------------------------------------------
+
+def _apply_technology_settings(
+    network: pypsa.Network,
+    settings: dict[str, TechnologySettings],
+) -> None:
+    for technology, technology_settings in settings.items():
+        carriers = TECHNOLOGY_CARRIERS.get(
+            technology
+        )
+
+        if carriers is None:
+            raise ValueError(
+                f"Unknown technology: {technology}"
+            )
+
+        _configure_technology(
+            network=network,
+            carriers=carriers,
+            settings=technology_settings,
+        )
+
+
+def _configure_technology(
+    network: pypsa.Network,
+    carriers: set[str],
+    settings: TechnologySettings,
+) -> None:
+    normalised_carriers = {
+        str(carrier).casefold()
+        for carrier in carriers
+    }
+
+    for (
+        component_name,
+        table_name,
+        extendable_column,
+    ) in COMPONENT_TECHNOLOGY_SPECS:
+        table = getattr(
+            network,
+            table_name,
+            None,
+        )
 
         if (
             table is None
             or table.empty
             or "carrier" not in table.columns
-            or "capital_cost" not in table.columns
         ):
             continue
 
-        battery_mask = (
+        carrier_mask = (
             table["carrier"]
             .fillna("")
             .astype(str)
-            .str.contains(
-                "battery",
-                case=False,
-                regex=False,
+            .str.casefold()
+            .isin(normalised_carriers)
+        )
+
+        if not carrier_mask.any():
+            continue
+
+        matching_names = table.index[
+            carrier_mask
+        ]
+
+        if not settings.enabled:
+            _remove_components(
+                network=network,
+                component_name=component_name,
+                names=matching_names,
             )
-        )
+            continue
 
-        table.loc[battery_mask, "capital_cost"] *= (
-            BATTERY_COST_FACTOR
-        )
+        if extendable_column in table.columns:
+            table.loc[
+                carrier_mask,
+                extendable_column,
+            ] = bool(
+                settings.allow_expansion
+            )
+
+        if "capital_cost" in table.columns:
+            table.loc[
+                carrier_mask,
+                "capital_cost",
+            ] = (
+                table.loc[
+                    carrier_mask,
+                    "capital_cost",
+                ]
+                .fillna(0.0)
+                .astype(float)
+                * settings.capital_cost_multiplier
+            )
+
+        if "marginal_cost" in table.columns:
+            table.loc[
+                carrier_mask,
+                "marginal_cost",
+            ] = (
+                table.loc[
+                    carrier_mask,
+                    "marginal_cost",
+                ]
+                .fillna(0.0)
+                .astype(float)
+                * settings.marginal_cost_multiplier
+            )
 
 
-def _apply_high_demand(
+def _apply_technology_cost_multiplier(
     network: pypsa.Network,
+    carriers: set[str],
+    capital_cost_multiplier: float,
+    marginal_cost_multiplier: float,
 ) -> None:
-    if "p_set" in network.loads.columns:
-        network.loads["p_set"] *= HIGH_DEMAND_FACTOR
+    settings = TechnologySettings(
+        enabled=True,
+        allow_expansion=True,
+        capital_cost_multiplier=capital_cost_multiplier,
+        marginal_cost_multiplier=marginal_cost_multiplier,
+    )
 
-    if (
-        hasattr(network, "loads_t")
-        and "p_set" in network.loads_t
-        and not network.loads_t.p_set.empty
-    ):
-        network.loads_t.p_set *= HIGH_DEMAND_FACTOR
+    _configure_technology(
+        network=network,
+        carriers=carriers,
+        settings=settings,
+    )
 
 
-def _apply_high_co2_price(
+# ------------------------------------------------------------------
+# CO₂ policy
+# ------------------------------------------------------------------
+
+def _apply_co2_policy(
     network: pypsa.Network,
+    policy: CO2Policy,
+) -> None:
+    if policy.mode == "none":
+        return
+
+    if policy.value is None:
+        raise ValueError(
+            "A value is required for the selected CO₂ policy."
+        )
+
+    if policy.value < 0:
+        raise ValueError(
+            "The CO₂ policy value cannot be negative."
+        )
+
+    if policy.mode == "price":
+        _apply_co2_price(
+            network=network,
+            price_eur_per_tonne=policy.value,
+        )
+        return
+
+    if policy.mode == "absolute_cap":
+        _apply_absolute_co2_cap(
+            network=network,
+            limit_mt_co2=policy.value,
+        )
+        return
+
+    raise ValueError(
+        f"Unknown CO₂ policy mode: {policy.mode}"
+    )
+
+
+def _apply_co2_price(
+    network: pypsa.Network,
+    price_eur_per_tonne: float,
 ) -> None:
     """
     Add a CO₂-price contribution to generator marginal costs.
@@ -704,6 +1235,14 @@ def _apply_high_co2_price(
     The carrier's ``co2_emissions`` value is divided by generator efficiency.
     Existing marginal costs are retained and the CO₂ cost is added.
     """
+
+    if price_eur_per_tonne < 0:
+        raise ValueError(
+            "The CO₂ price cannot be negative."
+        )
+
+    if price_eur_per_tonne == 0:
+        return
 
     if network.generators.empty:
         return
@@ -719,7 +1258,9 @@ def _apply_high_co2_price(
 
     emissions = (
         network.generators["carrier"]
-        .map(network.carriers["co2_emissions"])
+        .map(
+            network.carriers["co2_emissions"]
+        )
         .fillna(0.0)
         .astype(float)
     )
@@ -727,7 +1268,10 @@ def _apply_high_co2_price(
     if "efficiency" in network.generators.columns:
         efficiency = (
             network.generators["efficiency"]
-            .replace(0.0, pd.NA)
+            .replace(
+                0.0,
+                pd.NA,
+            )
             .fillna(1.0)
             .astype(float)
         )
@@ -738,7 +1282,7 @@ def _apply_high_co2_price(
         )
 
     carbon_cost = (
-        HIGH_CO2_PRICE_EUR_PER_TONNE
+        price_eur_per_tonne
         * emissions
         / efficiency
     )
@@ -754,6 +1298,70 @@ def _apply_high_co2_price(
     )
 
 
+def _apply_absolute_co2_cap(
+    network: pypsa.Network,
+    limit_mt_co2: float,
+) -> None:
+    """
+    Apply an absolute annual CO₂ cap.
+
+    The value supplied by the UI is in MtCO₂ and is converted to tonnes.
+    """
+
+    if limit_mt_co2 < 0:
+        raise ValueError(
+            "The absolute CO₂ limit cannot be negative."
+        )
+
+    limit_tonnes = (
+        limit_mt_co2
+        * 1_000_000.0
+    )
+
+    constraint_name = (
+        "scenario_builder_co2_limit"
+    )
+
+    if (
+        constraint_name
+        in network.global_constraints.index
+    ):
+        network.global_constraints.loc[
+            constraint_name,
+            "type",
+        ] = "primary_energy"
+
+        network.global_constraints.loc[
+            constraint_name,
+            "carrier_attribute",
+        ] = "co2_emissions"
+
+        network.global_constraints.loc[
+            constraint_name,
+            "sense",
+        ] = "<="
+
+        network.global_constraints.loc[
+            constraint_name,
+            "constant",
+        ] = limit_tonnes
+
+        return
+
+    network.add(
+        "GlobalConstraint",
+        constraint_name,
+        type="primary_energy",
+        carrier_attribute="co2_emissions",
+        sense="<=",
+        constant=limit_tonnes,
+    )
+
+
+# ------------------------------------------------------------------
+# Interconnection
+# ------------------------------------------------------------------
+
 def _remove_cross_border_branches(
     network: pypsa.Network,
 ) -> None:
@@ -765,11 +1373,24 @@ def _remove_cross_border_branches(
     )
 
     for component_name, table_name in (
-        ("Line", "lines"),
-        ("Link", "links"),
-        ("Transformer", "transformers"),
+        (
+            "Line",
+            "lines",
+        ),
+        (
+            "Link",
+            "links",
+        ),
+        (
+            "Transformer",
+            "transformers",
+        ),
     ):
-        table = getattr(network, table_name, None)
+        table = getattr(
+            network,
+            table_name,
+            None,
+        )
 
         if (
             table is None
@@ -779,8 +1400,13 @@ def _remove_cross_border_branches(
         ):
             continue
 
-        country_0 = table["bus0"].map(bus_country)
-        country_1 = table["bus1"].map(bus_country)
+        country_0 = table["bus0"].map(
+            bus_country
+        )
+
+        country_1 = table["bus1"].map(
+            bus_country
+        )
 
         cross_border_mask = (
             country_0.notna()
@@ -791,8 +1417,117 @@ def _remove_cross_border_branches(
         _remove_components(
             network=network,
             component_name=component_name,
-            names=table.index[cross_border_mask],
+            names=table.index[
+                cross_border_mask
+            ],
         )
+
+
+# ------------------------------------------------------------------
+# Cleanup
+# ------------------------------------------------------------------
+
+def _remove_unused_non_electric_buses(
+    network: pypsa.Network,
+) -> None:
+    """
+    Remove unused auxiliary buses after technology filtering.
+
+    Electricity buses are retained even when they currently have no attached
+    components. This avoids accidentally deleting selected country buses.
+    """
+
+    used_buses: set[str] = set()
+
+    for table_name in (
+        "generators",
+        "loads",
+        "storage_units",
+        "stores",
+        "shunt_impedances",
+    ):
+        table = getattr(
+            network,
+            table_name,
+            None,
+        )
+
+        if (
+            table is None
+            or table.empty
+            or "bus" not in table.columns
+        ):
+            continue
+
+        used_buses.update(
+            table["bus"]
+            .dropna()
+            .astype(str)
+        )
+
+    for table_name in (
+        "lines",
+        "links",
+        "transformers",
+    ):
+        table = getattr(
+            network,
+            table_name,
+            None,
+        )
+
+        if table is None or table.empty:
+            continue
+
+        bus_columns = [
+            column
+            for column in table.columns
+            if column.startswith("bus")
+        ]
+
+        for bus_column in bus_columns:
+            used_buses.update(
+                table[bus_column]
+                .dropna()
+                .astype(str)
+                .loc[
+                    lambda values: values.ne("")
+                ]
+            )
+
+    if "carrier" in network.buses.columns:
+        auxiliary_bus_mask = (
+            network.buses["carrier"]
+            .fillna("")
+            .astype(str)
+            .str.casefold()
+            .isin(
+                {
+                    "hydrogen",
+                    "h2",
+                    "battery",
+                }
+            )
+        )
+    else:
+        auxiliary_bus_mask = pd.Series(
+            False,
+            index=network.buses.index,
+            dtype=bool,
+        )
+
+    remove_names = network.buses.index[
+        auxiliary_bus_mask
+        & ~network.buses.index.isin(
+            used_buses
+        )
+    ]
+
+    _remove_components(
+        network=network,
+        component_name="Bus",
+        names=remove_names,
+    )
 
 
 def _remove_components(
@@ -804,21 +1539,40 @@ def _remove_components(
     Remove components one at a time for compatibility across PyPSA versions.
     """
 
-    for name in list(names):
-        network.remove(component_name, name)
+    for name in list(
+        names
+    ):
+        network.remove(
+            component_name,
+            name,
+        )
 
+
+# ------------------------------------------------------------------
+# Naming
+# ------------------------------------------------------------------
 
 def _build_network_name(
     countries: list[str],
     scenario: str,
 ) -> str:
-    country_part = "-".join(countries)
+    country_part = "-".join(
+        countries
+    )
 
     scenario_part = (
         scenario
         .lower()
-        .replace("₂", "2")
-        .replace(" ", "-")
+        .replace(
+            "₂",
+            "2",
+        )
+        .replace(
+            " ",
+            "-",
+        )
     )
 
-    return f"{country_part}-{scenario_part}"
+    return (
+        f"{country_part}-{scenario_part}"
+    )

@@ -21,6 +21,9 @@ from PySide6.QtWidgets import (
 )
 
 from pypsa_gui.models.network_session import NetworkSession
+from pypsa_gui.models.scenario_definition import (
+    ScenarioDefinition,
+)
 from pypsa_gui.models.session_view import (
     NAVIGATION_STRUCTURE,
     SECTION_TITLES,
@@ -1140,8 +1143,8 @@ class MainWindow(QMainWindow):
         )
 
     def on_scenario_requested(
-        self,
-        definition: dict,
+            self,
+            definition: ScenarioDefinition,
     ) -> None:
         self.log(
             "Scenario request received"
@@ -1152,12 +1155,7 @@ class MainWindow(QMainWindow):
 
         try:
             network = build_scenario_network(
-                countries=definition[
-                    "countries"
-                ],
-                scenario=definition[
-                    "scenario"
-                ],
+                definition=definition,
             )
 
             self._add_network_session(
@@ -1174,7 +1172,7 @@ class MainWindow(QMainWindow):
                         "research_modules",
                     },
                 ),
-                name=definition["name"],
+                name=definition.name,
             )
         except Exception as exc:
             self.log(

@@ -33,7 +33,7 @@ class PlaceholderPage(QWidget):
 
 
 class CentralPanel(QWidget):
-    scenario_requested = Signal(dict)
+    scenario_requested = Signal(object)
     run_optimisation_requested = Signal()
 
     def __init__(
