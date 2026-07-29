@@ -1,0 +1,40 @@
+name: pypsa-gui
+
+channels:
+  - conda-forge
+
+dependencies:
+  # Python
+  - python=3.12
+  - pip
+
+  # Scientific stack
+  - numpy
+  - pandas
+  - scipy
+  - xarray
+
+  # Plotting
+  - matplotlib
+  - cartopy
+
+  # GUI
+  - pyside6
+
+  # Energy system modelling
+  - pypsa
+  - highspy
+
+  # NetCDF support
+  - netcdf4
+  - h5netcdf
+
+  # PDF generation
+  - reportlab
+
+  # Development helpers
+  - pyyaml
+
+  # Install your package
+  - pip:
+      - -e .
