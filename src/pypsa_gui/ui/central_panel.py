@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QLabel,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from pypsa_gui.models.session_view import PAGE_TO_SECTION
 from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
@@ -17,8 +22,12 @@ from pypsa_gui.ui.pages.network_map_page import NetworkMapPage
 from pypsa_gui.ui.pages.optimisation_page import OptimisationPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
 from pypsa_gui.ui.pages.pre_run_tools_page import PreRunToolsPage
-from pypsa_gui.ui.pages.run.solver_settings_page import SolverSettingsPage
-from pypsa_gui.ui.pages.scenario_builder_page import ScenarioBuilderPage
+from pypsa_gui.ui.pages.run.solver_settings_page import (
+    SolverSettingsPage,
+)
+from pypsa_gui.ui.pages.scenario_builder_page import (
+    ScenarioBuilderPage,
+)
 from pypsa_gui.ui.pages.summary_page import SummaryPage
 from pypsa_gui.ui.pages.time_series_page import TimeSeriesPage
 
@@ -28,6 +37,7 @@ class PlaceholderPage(QWidget):
         super().__init__()
 
         layout = QVBoxLayout(self)
+
         label = QLabel(f"{title} page placeholder")
         layout.addWidget(label)
 
@@ -45,6 +55,7 @@ class CentralPanel(QWidget):
 
         self.enabled_sections = enabled_sections or {
             "overview",
+            "build",
             "components",
             "analysis",
             "plots",
@@ -68,6 +79,10 @@ class CentralPanel(QWidget):
     ) -> dict[str, Callable[[], QWidget]]:
         return {
             "Overview": OverviewPage,
+            "Scenario Builder": ScenarioBuilderPage,
+            "Network Builder": lambda: PlaceholderPage(
+                "Network Builder"
+            ),
             "Summary": SummaryPage,
             "Buses": BusesPage,
             "Generators": lambda: ComponentPage("generators"),
@@ -75,7 +90,9 @@ class CentralPanel(QWidget):
             "Lines": lambda: ComponentPage("lines"),
             "Links": lambda: ComponentPage("links"),
             "Stores": lambda: ComponentPage("stores"),
-            "Storage Units": lambda: ComponentPage("storage_units"),
+            "Storage Units": lambda: ComponentPage(
+                "storage_units"
+            ),
             "Global Constraints": lambda: ComponentPage(
                 "global_constraints"
             ),
@@ -86,11 +103,12 @@ class CentralPanel(QWidget):
             "Network Map": NetworkMapPage,
             "Time Series": TimeSeriesPage,
             "Capacities": CapacitiesPage,
-            "Power Flow": lambda: PlaceholderPage("Power Flow"),
+            "Power Flow": lambda: PlaceholderPage(
+                "Power Flow"
+            ),
             "Optimisation": OptimisationPage,
             "Solver Settings": SolverSettingsPage,
             "Pre-Run Tools": PreRunToolsPage,
-            "Scenario Builder": ScenarioBuilderPage,
         }
 
     def rebuild_pages(
@@ -100,7 +118,9 @@ class CentralPanel(QWidget):
         self.enabled_sections = set(enabled_sections)
         self._clear_pages()
 
-        for page_name, factory in self._core_page_factories.items():
+        for page_name, factory in (
+            self._core_page_factories.items()
+        ):
             section_key = PAGE_TO_SECTION.get(page_name)
 
             if section_key not in self.enabled_sections:
@@ -111,7 +131,8 @@ class CentralPanel(QWidget):
                 factory(),
             )
 
-        # Research-module pages are recreated separately by MainWindow.
+        # Research-module pages are recreated separately
+        # by MainWindow.
 
     def _clear_pages(self) -> None:
         while self.stack.count():
@@ -180,6 +201,7 @@ class CentralPanel(QWidget):
             return
 
         self._module_pages[name] = widget
+
         self._add_page(
             name,
             widget,
@@ -224,8 +246,8 @@ class CentralPanel(QWidget):
         """
         Refresh the Optimisation page after a solve completed.
 
-        This enables the PDF report button when solved results are
-        available on the currently assigned network.
+        This enables the PDF report button when solved results
+        are available on the currently assigned network.
         """
 
         page = self.pages.get("Optimisation")

@@ -2,15 +2,37 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+
 WORKSPACE_PRESETS: dict[str, set[str]] = {
-    "full": {"overview", "components", "analysis", "plots", "run","research_modules",},
-    "lightweight": {"components", "run"},
-    "analysis": {"overview", "analysis", "plots"},
+    "full": {
+        "overview",
+        "build",
+        "components",
+        "analysis",
+        "plots",
+        "run",
+        "research_modules",
+    },
+    "lightweight": {
+        "build",
+        "components",
+        "run",
+    },
+    "analysis": {
+        "overview",
+        "analysis",
+        "plots",
+    },
 }
+
 
 NAVIGATION_STRUCTURE: dict[str, list[str]] = {
     "overview": [
         "Overview",
+    ],
+    "build": [
+        "Scenario Builder",
+        "Network Builder",
     ],
     "components": [
         "Buses",
@@ -39,13 +61,14 @@ NAVIGATION_STRUCTURE: dict[str, list[str]] = {
         "Optimisation",
         "Solver Settings",
         "Pre-Run Tools",
-        "Scenario Builder",
     ],
     "research_modules": [],
 }
 
+
 SECTION_TITLES: dict[str, str] = {
     "overview": "Overview",
+    "build": "Build",
     "components": "Components",
     "analysis": "Analysis",
     "plots": "Plots",
@@ -53,8 +76,13 @@ SECTION_TITLES: dict[str, str] = {
     "research_modules": "Research Modules",
 }
 
+
 PAGE_TO_SECTION: dict[str, str] = {
     "Overview": "overview",
+
+    "Scenario Builder": "build",
+    "Network Builder": "build",
+
     "Buses": "components",
     "Generators": "components",
     "Loads": "components",
@@ -63,19 +91,21 @@ PAGE_TO_SECTION: dict[str, str] = {
     "Stores": "components",
     "Storage Units": "components",
     "Global Constraints": "components",
+
     "Summary": "analysis",
     "Prices": "analysis",
     "Congestion": "analysis",
     "Storage": "analysis",
     "Emissions": "analysis",
+
     "Network Map": "plots",
     "Time Series": "plots",
     "Capacities": "plots",
+
     "Power Flow": "run",
     "Optimisation": "run",
     "Solver Settings": "run",
     "Pre-Run Tools": "run",
-    "Scenario Builder": "run",
 }
 
 
@@ -83,15 +113,25 @@ PAGE_TO_SECTION: dict[str, str] = {
 class SessionViewOptions:
     workspace_name: str = "full"
     enabled_sections: set[str] = field(
-        default_factory=lambda: set(WORKSPACE_PRESETS["full"])
+        default_factory=lambda: set(
+            WORKSPACE_PRESETS["full"]
+        )
     )
 
     @classmethod
-    def from_workspace(cls, workspace_name: str) -> "SessionViewOptions":
+    def from_workspace(
+        cls,
+        workspace_name: str,
+    ) -> "SessionViewOptions":
         return cls(
             workspace_name=workspace_name,
-            enabled_sections=set(WORKSPACE_PRESETS[workspace_name]),
+            enabled_sections=set(
+                WORKSPACE_PRESETS[workspace_name]
+            ),
         )
 
-    def is_section_enabled(self, section: str) -> bool:
+    def is_section_enabled(
+        self,
+        section: str,
+    ) -> bool:
         return section in self.enabled_sections

@@ -315,6 +315,7 @@ class MainWindow(QMainWindow):
         if session is None:
             enabled_sections = {
                 "overview",
+                "build",
                 "components",
                 "analysis",
                 "plots",
@@ -330,6 +331,7 @@ class MainWindow(QMainWindow):
 
         section_order = [
             "overview",
+            "build",
             "components",
             "analysis",
             "plots",
@@ -561,6 +563,7 @@ class MainWindow(QMainWindow):
             self.central_panel.rebuild_pages(
                 {
                     "overview",
+                    "build",
                     "components",
                     "analysis",
                     "plots",
@@ -1165,6 +1168,7 @@ class MainWindow(QMainWindow):
                     workspace_name="Scenario",
                     enabled_sections={
                         "overview",
+                        "build",
                         "components",
                         "analysis",
                         "plots",
