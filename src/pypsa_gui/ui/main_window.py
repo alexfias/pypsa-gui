@@ -270,6 +270,10 @@ class MainWindow(QMainWindow):
             self.on_scenario_requested
         )
 
+        self.central_panel.create_empty_network_requested.connect(
+            self.on_create_empty_network
+        )
+
         self.central_panel.run_optimisation_requested.connect(
             self.on_run_optimisation
         )
@@ -1144,6 +1148,72 @@ class MainWindow(QMainWindow):
                 dialog.selected_enabled_sections()
             ),
         )
+
+    def _next_empty_network_name(self) -> str:
+        existing_names = {
+            session.name
+            for session in self.network_store.list_sessions()
+        }
+
+        base_name = "New network"
+
+        if base_name not in existing_names:
+            return base_name
+
+        index = 2
+
+        while f"{base_name} {index}" in existing_names:
+            index += 1
+
+        return f"{base_name} {index}"
+
+    def on_create_empty_network(self) -> None:
+        self.log(
+            "Creating empty PyPSA network."
+        )
+
+        try:
+            network = pypsa.Network()
+
+            self._add_network_session(
+                network=network,
+                source_path=None,
+                view_options=SessionViewOptions(
+                    workspace_name="Network Builder",
+                    enabled_sections={
+                        "overview",
+                        "build",
+                        "components",
+                        "analysis",
+                        "plots",
+                        "run",
+                        "research_modules",
+                    },
+                ),
+                name=self._next_empty_network_name(),
+            )
+
+            self.central_panel.show_page(
+                "Network Builder"
+            )
+
+            self.log(
+                "Empty network created."
+            )
+
+        except Exception as exc:
+            self.log(
+                "Could not create empty network: "
+                f"{exc}"
+            )
+
+            QMessageBox.critical(
+                self,
+                "Network Builder",
+                "Could not create an empty network:"
+                "\n\n"
+                f"{exc}",
+            )
 
     def on_scenario_requested(
             self,

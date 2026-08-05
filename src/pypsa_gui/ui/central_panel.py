@@ -18,6 +18,9 @@ from pypsa_gui.ui.pages.capacities_page import CapacitiesPage
 from pypsa_gui.ui.pages.component_page import ComponentPage
 from pypsa_gui.ui.pages.congestion_page import CongestionPage
 from pypsa_gui.ui.pages.emissions_page import EmissionsPage
+from pypsa_gui.ui.pages.network_builder_page import (
+    NetworkBuilderPage,
+)
 from pypsa_gui.ui.pages.network_map_page import NetworkMapPage
 from pypsa_gui.ui.pages.optimisation_page import OptimisationPage
 from pypsa_gui.ui.pages.overview_page import OverviewPage
@@ -44,6 +47,7 @@ class PlaceholderPage(QWidget):
 
 class CentralPanel(QWidget):
     scenario_requested = Signal(object)
+    create_empty_network_requested = Signal()
     run_optimisation_requested = Signal()
 
     def __init__(
@@ -80,9 +84,7 @@ class CentralPanel(QWidget):
         return {
             "Overview": OverviewPage,
             "Scenario Builder": ScenarioBuilderPage,
-            "Network Builder": lambda: PlaceholderPage(
-                "Network Builder"
-            ),
+            "Network Builder": NetworkBuilderPage,
             "Summary": SummaryPage,
             "Buses": BusesPage,
             "Generators": lambda: ComponentPage("generators"),
@@ -167,6 +169,14 @@ class CentralPanel(QWidget):
         ):
             widget.scenario_requested.connect(
                 self.scenario_requested.emit
+            )
+
+        if (
+            name == "Network Builder"
+            and isinstance(widget, NetworkBuilderPage)
+        ):
+            widget.create_empty_network_requested.connect(
+                self.create_empty_network_requested.emit
             )
 
         if (
