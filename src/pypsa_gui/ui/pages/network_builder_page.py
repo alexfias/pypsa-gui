@@ -679,13 +679,20 @@ class NetworkBuilderPage(QWidget):
             self.navigation_toolbar.zoom()
 
     def _reset_map_view(self) -> None:
-        if not hasattr(
-            self,
-            "navigation_toolbar",
-        ):
-            return
+        self._deactivate_matplotlib_navigation()
 
-        self.navigation_toolbar.home()
+        if CARTOPY_AVAILABLE:
+            self.map_axes.set_global()
+        else:
+            self.map_axes.set_xlim(
+                -180,
+                180,
+            )
+            self.map_axes.set_ylim(
+                -90,
+                90,
+            )
+
         self.canvas.draw_idle()
 
     # ------------------------------------------------------------------
@@ -1201,14 +1208,27 @@ class NetworkBuilderPage(QWidget):
     # Map rendering
     # ------------------------------------------------------------------
 
-    def refresh_map(self) -> None:
+    def refresh_map(
+        self,
+        preserve_view: bool = True,
+    ) -> None:
         if not hasattr(
             self,
             "map_axes",
         ):
             return
 
+        previous_view = None
+
+        if preserve_view:
+            previous_view = self._current_map_view()
+
         self._create_map_axes()
+
+        if previous_view is not None:
+            self._restore_map_view(
+                previous_view
+            )
 
         bus_count = 0
         line_count = 0
@@ -1235,6 +1255,68 @@ class NetworkBuilderPage(QWidget):
         )
 
         self.canvas.draw_idle()
+
+    def _current_map_view(
+        self,
+    ) -> tuple[float, float, float, float] | None:
+        if not hasattr(
+            self,
+            "map_axes",
+        ):
+            return None
+
+        try:
+            if CARTOPY_AVAILABLE:
+                extent = self.map_axes.get_extent(
+                    crs=ccrs.PlateCarree()
+                )
+
+                return (
+                    float(extent[0]),
+                    float(extent[1]),
+                    float(extent[2]),
+                    float(extent[3]),
+                )
+
+            x_min, x_max = self.map_axes.get_xlim()
+            y_min, y_max = self.map_axes.get_ylim()
+
+            return (
+                float(x_min),
+                float(x_max),
+                float(y_min),
+                float(y_max),
+            )
+
+        except Exception:
+            return None
+
+    def _restore_map_view(
+        self,
+        view: tuple[float, float, float, float],
+    ) -> None:
+        x_min, x_max, y_min, y_max = view
+
+        if CARTOPY_AVAILABLE:
+            self.map_axes.set_extent(
+                [
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                ],
+                crs=ccrs.PlateCarree(),
+            )
+            return
+
+        self.map_axes.set_xlim(
+            x_min,
+            x_max,
+        )
+        self.map_axes.set_ylim(
+            y_min,
+            y_max,
+        )
 
     def _draw_buses(self) -> None:
         if self.network is None:
