@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
+from uuid import uuid4
 
 from matplotlib.backend_bases import MouseButton
 from matplotlib.backends.backend_qtagg import (
@@ -14,6 +15,8 @@ from matplotlib.backends.backend_qtagg import (
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup
+from pypsa_gui.models.network_location import NetworkLocation
+
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -48,7 +51,7 @@ except ImportError:
 
 class TopologyToolMode(str, Enum):
     SELECT = "select"
-    ADD_BUS = "add_bus"
+    ADD_LOCATION = "add_location"
     ADD_LINE = "add_line"
     ADD_LINK = "add_link"
     DELETE = "delete"
@@ -66,8 +69,9 @@ class NetworkBuilderPage(QWidget):
         super().__init__(parent)
 
         self.network: Any | None = None
+        self.locations: dict[str, NetworkLocation] = {}
         self.topology_tool_mode = TopologyToolMode.SELECT
-        self.pending_connection_bus: str | None = None
+        self.pending_connection_location: str | None = None
 
         self.page_stack = QStackedWidget(self)
 
@@ -91,11 +95,30 @@ class NetworkBuilderPage(QWidget):
         self,
         network: Any | None,
     ) -> None:
+        self.set_network_context(
+            network=network,
+            locations=None,
+        )
+
+    def set_network_context(
+        self,
+        network: Any | None,
+        locations: dict[str, NetworkLocation] | None,
+    ) -> None:
         self.network = network
 
         if network is None:
+            self.locations = {}
             self.show_welcome_view()
             return
+
+        if locations is None:
+            self.locations = self._infer_locations_from_network(
+                network
+            )
+        else:
+            self.locations = locations
+            self._ensure_locations_for_unassigned_buses()
 
         self.show_editor_view()
         self.refresh_map()
@@ -300,7 +323,7 @@ class NetworkBuilderPage(QWidget):
         )
 
         self.network_summary_label = QLabel(
-            "0 buses · 0 lines · 0 links"
+            "0 locations · 0 buses · 0 lines · 0 links"
         )
         self.network_summary_label.setStyleSheet(
             """
@@ -425,18 +448,21 @@ class NetworkBuilderPage(QWidget):
             toolbar=toolbar,
             text="↖  Select",
             tooltip=(
-                "Select a bus, line, or link and inspect "
+                "Select a location, line, or link and inspect "
                 "its properties."
             ),
             mode=TopologyToolMode.SELECT,
             shortcut="S",
         )
 
-        self.add_bus_action = self._create_topology_action(
+        self.add_location_action = self._create_topology_action(
             toolbar=toolbar,
-            text="●  Bus",
-            tooltip="Place a new bus on the map.",
-            mode=TopologyToolMode.ADD_BUS,
+            text="●  Location",
+            tooltip=(
+                "Place a geographical location with one default "
+                "electricity bus."
+            ),
+            mode=TopologyToolMode.ADD_LOCATION,
             shortcut="B",
         )
 
@@ -585,7 +611,7 @@ class NetworkBuilderPage(QWidget):
         self,
         mode: TopologyToolMode,
     ) -> None:
-        self.pending_connection_bus = None
+        self.pending_connection_location = None
 
         if hasattr(
             self,
@@ -602,21 +628,21 @@ class NetworkBuilderPage(QWidget):
 
         instructions = {
             TopologyToolMode.SELECT: (
-                "Mode: Select — click a bus, line, or link "
+                "Mode: Select — click a location, line, or link "
                 "to inspect it."
             ),
-            TopologyToolMode.ADD_BUS: (
-                "Mode: Add bus — click anywhere on the map "
-                "to place a new bus."
+            TopologyToolMode.ADD_LOCATION: (
+                "Mode: Add location — click anywhere on the map "
+                "to place a location with a default electricity bus."
             ),
             TopologyToolMode.ADD_LINE: (
-                "Mode: Add line — select the first bus."
+                "Mode: Add line — select the first location."
             ),
             TopologyToolMode.ADD_LINK: (
-                "Mode: Add link — select the first bus."
+                "Mode: Add link — select the first location."
             ),
             TopologyToolMode.DELETE: (
-                "Mode: Delete — click a bus, line, or link "
+                "Mode: Delete — click a location, line, or link "
                 "to remove it."
             ),
             TopologyToolMode.PAN: (
@@ -712,10 +738,7 @@ class NetworkBuilderPage(QWidget):
         if event.inaxes is not self.map_axes:
             return
 
-        if (
-            event.xdata is None
-            or event.ydata is None
-        ):
+        if event.xdata is None or event.ydata is None:
             return
 
         if self.topology_tool_mode in {
@@ -724,8 +747,8 @@ class NetworkBuilderPage(QWidget):
         }:
             return
 
-        if self.topology_tool_mode == TopologyToolMode.ADD_BUS:
-            self._create_bus_at(
+        if self.topology_tool_mode == TopologyToolMode.ADD_LOCATION:
+            self._create_location_at(
                 longitude=float(event.xdata),
                 latitude=float(event.ydata),
             )
@@ -735,111 +758,155 @@ class NetworkBuilderPage(QWidget):
             TopologyToolMode.ADD_LINE,
             TopologyToolMode.ADD_LINK,
         }:
-            bus_name = self._find_bus_near_event(event)
+            location_id = self._find_location_near_event(event)
 
-            if bus_name is None:
+            if location_id is None:
                 self.tool_status_label.setText(
-                    "Click directly on an existing bus."
+                    "Click directly on an existing location."
                 )
                 return
 
-            self._handle_connection_bus_click(
-                bus_name
-            )
+            self._handle_connection_location_click(location_id)
 
-    def _find_bus_near_event(
+    def _find_location_near_event(
         self,
         event,
-        tolerance_pixels: float = 14.0,
+        tolerance_pixels: float = 18.0,
     ) -> str | None:
-        if self.network is None:
-            return None
-
-        buses = self.network.buses
-
-        if buses.empty:
-            return None
-
-        valid_buses = buses[
-            buses["x"].notna()
-            & buses["y"].notna()
-        ]
-
-        if valid_buses.empty:
+        if not self.locations:
             return None
 
         click_x = float(event.x)
         click_y = float(event.y)
-
-        nearest_name: str | None = None
+        nearest_id: str | None = None
         nearest_distance = float("inf")
 
-        for bus_name, bus in valid_buses.iterrows():
-            display_x, display_y = (
-                self.map_axes.transData.transform(
-                    (
-                        float(bus["x"]),
-                        float(bus["y"]),
-                    )
-                )
+        for location_id, location in self.locations.items():
+            display_x, display_y = self.map_axes.transData.transform(
+                (location.longitude, location.latitude)
             )
-
             distance = sqrt(
                 (display_x - click_x) ** 2
                 + (display_y - click_y) ** 2
             )
-
             if distance < nearest_distance:
                 nearest_distance = distance
-                nearest_name = str(bus_name)
+                nearest_id = location_id
 
         if nearest_distance > tolerance_pixels:
             return None
 
-        return nearest_name
+        return nearest_id
 
-    def _handle_connection_bus_click(
+    def _handle_connection_location_click(
         self,
-        bus_name: str,
+        location_id: str,
     ) -> None:
-        if self.pending_connection_bus is None:
-            self.pending_connection_bus = bus_name
+        location = self.locations[location_id]
 
+        if self.pending_connection_location is None:
+            self.pending_connection_location = location_id
             component_label = (
                 "line"
-                if self.topology_tool_mode
-                == TopologyToolMode.ADD_LINE
+                if self.topology_tool_mode == TopologyToolMode.ADD_LINE
                 else "link"
             )
-
             self.tool_status_label.setText(
-                f'Selected first bus "{bus_name}". '
-                f"Select the second bus for the {component_label}."
+                f'Selected first location "{location.name}". '
+                f"Select the second location for the {component_label}."
             )
             self.refresh_map()
             return
 
-        first_bus = self.pending_connection_bus
-        second_bus = bus_name
+        first_location_id = self.pending_connection_location
+        second_location_id = location_id
 
-        if first_bus == second_bus:
+        if first_location_id == second_location_id:
             self.tool_status_label.setText(
-                "The second bus must be different from the first bus."
+                "The second location must be different from the first location."
             )
             return
 
-        self.pending_connection_bus = None
+        self.pending_connection_location = None
+        first_location = self.locations[first_location_id]
+        second_location = self.locations[second_location_id]
+        component_label = (
+            "line"
+            if self.topology_tool_mode == TopologyToolMode.ADD_LINE
+            else "link"
+        )
+
+        bus0 = self._choose_location_bus(
+            first_location,
+            endpoint_label="From",
+            component_label=component_label,
+        )
+        if bus0 is None:
+            self.refresh_map()
+            return
+
+        bus1 = self._choose_location_bus(
+            second_location,
+            endpoint_label="To",
+            component_label=component_label,
+        )
+        if bus1 is None:
+            self.refresh_map()
+            return
+
+        if bus0 == bus1:
+            QMessageBox.warning(
+                self,
+                "Invalid Connection",
+                "A connection must use two different PyPSA buses.",
+            )
+            self.refresh_map()
+            return
 
         if self.topology_tool_mode == TopologyToolMode.ADD_LINE:
-            self._create_line_between(
-                first_bus,
-                second_bus,
-            )
+            self._create_line_between(bus0, bus1)
         else:
-            self._create_link_between(
-                first_bus,
-                second_bus,
+            self._create_link_between(bus0, bus1)
+
+    def _choose_location_bus(
+        self,
+        location: NetworkLocation,
+        endpoint_label: str,
+        component_label: str,
+    ) -> str | None:
+        valid_bus_names = [
+            bus_name
+            for bus_name in location.bus_names
+            if self.network is not None
+            and bus_name in self.network.buses.index
+        ]
+
+        if not valid_bus_names:
+            QMessageBox.warning(
+                self,
+                "Location Has No Bus",
+                f'The location "{location.name}" has no available PyPSA bus.',
             )
+            return None
+
+        if len(valid_bus_names) == 1:
+            return valid_bus_names[0]
+
+        selected_bus, accepted = QInputDialog.getItem(
+            self,
+            f"Choose {endpoint_label} Bus",
+            (
+                f"{endpoint_label} location: {location.name}\n"
+                f"Choose the internal bus for the {component_label}:"
+            ),
+            valid_bus_names,
+            0,
+            False,
+        )
+        if not accepted:
+            return None
+
+        return str(selected_bus)
 
     def _create_line_between(
         self,
@@ -1043,7 +1110,7 @@ class NetworkBuilderPage(QWidget):
 
         return f"{base_name} {index}"
 
-    def _create_bus_at(
+    def _create_location_at(
         self,
         longitude: float,
         latitude: float,
@@ -1051,90 +1118,175 @@ class NetworkBuilderPage(QWidget):
         if self.network is None:
             return
 
-        longitude = max(
-            -180.0,
-            min(180.0, longitude),
-        )
-        latitude = max(
-            -90.0,
-            min(90.0, latitude),
-        )
+        longitude = max(-180.0, min(180.0, longitude))
+        latitude = max(-90.0, min(90.0, latitude))
+        suggested_name = self._next_location_name()
 
-        suggested_name = self._next_bus_name()
-
-        bus_name, accepted = QInputDialog.getText(
+        location_name, accepted = QInputDialog.getText(
             self,
-            "Add Bus",
+            "Add Location",
             (
-                "Bus name:\n\n"
+                "Location name:\n\n"
                 f"Longitude: {longitude:.4f}\n"
-                f"Latitude: {latitude:.4f}"
+                f"Latitude: {latitude:.4f}\n\n"
+                "A default electricity bus will be created inside this location."
             ),
             text=suggested_name,
         )
-
         if not accepted:
             return
 
-        bus_name = bus_name.strip()
-
-        if not bus_name:
+        location_name = location_name.strip()
+        if not location_name:
             QMessageBox.warning(
                 self,
-                "Invalid Bus Name",
-                "The bus name cannot be empty.",
+                "Invalid Location Name",
+                "The location name cannot be empty.",
             )
             return
 
-        if bus_name in self.network.buses.index:
+        if any(
+            existing.name == location_name
+            for existing in self.locations.values()
+        ):
             QMessageBox.warning(
                 self,
-                "Bus Already Exists",
-                (
-                    f'A bus named "{bus_name}" already exists. '
-                    "Please choose another name."
-                ),
+                "Location Already Exists",
+                f'A location named "{location_name}" already exists.',
             )
             return
+
+        bus_name = self._unique_default_bus_name(location_name)
+        location_id = str(uuid4())
 
         try:
             self.network.add(
                 "Bus",
                 bus_name,
+                carrier="AC",
                 x=longitude,
                 y=latitude,
             )
+            self.network.buses.loc[bus_name, "location"] = location_id
+            self.locations[location_id] = NetworkLocation(
+                id=location_id,
+                name=location_name,
+                longitude=longitude,
+                latitude=latitude,
+                bus_names=[bus_name],
+            )
         except Exception as exc:
+            if bus_name in self.network.buses.index:
+                self.network.remove("Bus", bus_name)
             QMessageBox.critical(
                 self,
-                "Add Bus Failed",
-                "Could not add the bus:\n\n"
+                "Add Location Failed",
+                "Could not add the location:\n\n"
                 f"{exc}",
             )
             return
 
         self.refresh_map()
-
         self.tool_status_label.setText(
-            f'Added bus "{bus_name}" at '
-            f"({longitude:.4f}, {latitude:.4f}). "
-            "Click elsewhere to add another bus."
+            f'Added location "{location_name}" with default bus '
+            f'"{bus_name}" at ({longitude:.4f}, {latitude:.4f}).'
         )
 
-    def _next_bus_name(self) -> str:
-        if self.network is None:
-            return "Bus 1"
-
-        existing_names = set(
-            self.network.buses.index.astype(str)
-        )
-
+    def _next_location_name(self) -> str:
+        existing_names = {
+            location.name
+            for location in self.locations.values()
+        }
         index = 1
-
-        while f"Bus {index}" in existing_names:
+        while f"Location {index}" in existing_names:
             index += 1
+        return f"Location {index}"
 
-        return f"Bus {index}"
+    def _unique_default_bus_name(
+        self,
+        location_name: str,
+    ) -> str:
+        if self.network is None:
+            return f"{location_name} electricity"
+
+        base_name = f"{location_name} electricity"
+        if base_name not in self.network.buses.index:
+            return base_name
+
+        index = 2
+        while f"{base_name} {index}" in self.network.buses.index:
+            index += 1
+        return f"{base_name} {index}"
+
+    def _infer_locations_from_network(
+        self,
+        network: Any,
+    ) -> dict[str, NetworkLocation]:
+        locations: dict[str, NetworkLocation] = {}
+
+        if network.buses.empty:
+            return locations
+
+        has_location_column = "location" in network.buses.columns
+
+        for bus_name, bus in network.buses.iterrows():
+            if bus[["x", "y"]].isna().any():
+                continue
+
+            raw_location_id = (
+                bus.get("location")
+                if has_location_column
+                else None
+            )
+            location_id = (
+                str(raw_location_id)
+                if raw_location_id is not None
+                and str(raw_location_id).strip()
+                and str(raw_location_id).lower() != "nan"
+                else str(uuid4())
+            )
+
+            if location_id not in locations:
+                locations[location_id] = NetworkLocation(
+                    id=location_id,
+                    name=str(bus_name),
+                    longitude=float(bus["x"]),
+                    latitude=float(bus["y"]),
+                    bus_names=[],
+                )
+
+            locations[location_id].bus_names.append(str(bus_name))
+            network.buses.loc[bus_name, "location"] = location_id
+
+        return locations
+
+    def _ensure_locations_for_unassigned_buses(
+        self,
+    ) -> None:
+        if self.network is None:
+            return
+
+        assigned_bus_names = {
+            bus_name
+            for location in self.locations.values()
+            for bus_name in location.bus_names
+        }
+
+        for bus_name, bus in self.network.buses.iterrows():
+            if str(bus_name) in assigned_bus_names:
+                continue
+            if bus[["x", "y"]].isna().any():
+                continue
+
+            location_id = str(uuid4())
+            self.locations[location_id] = NetworkLocation(
+                id=location_id,
+                name=str(bus_name),
+                longitude=float(bus["x"]),
+                latitude=float(bus["y"]),
+                bus_names=[str(bus_name)],
+            )
+            self.network.buses.loc[bus_name, "location"] = location_id
 
     # ------------------------------------------------------------------
     # Map creation
@@ -1230,6 +1382,7 @@ class NetworkBuilderPage(QWidget):
                 previous_view
             )
 
+        location_count = len(self.locations)
         bus_count = 0
         line_count = 0
         link_count = 0
@@ -1246,9 +1399,10 @@ class NetworkBuilderPage(QWidget):
             )
 
             self._draw_connections()
-            self._draw_buses()
+            self._draw_locations()
 
         self.network_summary_label.setText(
+            f"{location_count} locations · "
             f"{bus_count} buses · "
             f"{line_count} lines · "
             f"{link_count} links"
@@ -1318,78 +1472,58 @@ class NetworkBuilderPage(QWidget):
             y_max,
         )
 
-    def _draw_buses(self) -> None:
-        if self.network is None:
+    def _draw_locations(self) -> None:
+        if not self.locations:
             return
 
-        buses = self.network.buses
-
-        if buses.empty:
-            return
-
-        if (
-            "x" not in buses.columns
-            or "y" not in buses.columns
-        ):
-            return
-
-        valid_buses = buses[
-            buses["x"].notna()
-            & buses["y"].notna()
+        location_items = list(self.locations.items())
+        longitudes = [
+            location.longitude
+            for _, location in location_items
         ]
-
-        if valid_buses.empty:
-            return
-
+        latitudes = [
+            location.latitude
+            for _, location in location_items
+        ]
         colours = [
             (
                 "#d62728"
-                if (
-                    self.pending_connection_bus is not None
-                    and str(bus_name)
-                    == self.pending_connection_bus
-                )
+                if self.pending_connection_location == location_id
                 else "#1f77b4"
             )
-            for bus_name in valid_buses.index
+            for location_id, _ in location_items
         ]
 
         plot_arguments: dict[str, Any] = {
-            "s": 55,
+            "s": 65,
             "c": colours,
             "zorder": 5,
         }
-
         if CARTOPY_AVAILABLE:
-            plot_arguments["transform"] = (
-                ccrs.PlateCarree()
-            )
+            plot_arguments["transform"] = ccrs.PlateCarree()
 
         self.map_axes.scatter(
-            valid_buses["x"],
-            valid_buses["y"],
+            longitudes,
+            latitudes,
             **plot_arguments,
         )
 
-        for bus_name, bus in valid_buses.iterrows():
+        for _, location in location_items:
             annotation_arguments: dict[str, Any] = {
                 "xy": (
-                    bus["x"],
-                    bus["y"],
+                    location.longitude,
+                    location.latitude,
                 ),
                 "xytext": (5, 5),
                 "textcoords": "offset points",
                 "fontsize": 8,
                 "zorder": 6,
             }
-
             if CARTOPY_AVAILABLE:
-                annotation_arguments["transform"] = (
-                    ccrs.PlateCarree()
-                )
+                annotation_arguments["transform"] = ccrs.PlateCarree()
 
             self.map_axes.annotate(
-                str(bus_name),
+                location.name,
                 **annotation_arguments,
             )
 
@@ -1397,83 +1531,45 @@ class NetworkBuilderPage(QWidget):
         if self.network is None:
             return
 
-        buses = self.network.buses
-
-        if buses.empty:
-            return
-
-        self._draw_component_connections(
-            self.network.lines,
-            buses,
-        )
-
-        self._draw_component_connections(
-            self.network.links,
-            buses,
-        )
+        self._draw_component_connections(self.network.lines)
+        self._draw_component_connections(self.network.links)
 
     def _draw_component_connections(
         self,
         components,
-        buses,
     ) -> None:
         if components.empty:
             return
-
-        if (
-            "bus0" not in components.columns
-            or "bus1" not in components.columns
-        ):
+        if "bus0" not in components.columns or "bus1" not in components.columns:
             return
 
         for _, component in components.iterrows():
-            bus0_name = component["bus0"]
-            bus1_name = component["bus1"]
-
-            if (
-                bus0_name not in buses.index
-                or bus1_name not in buses.index
-            ):
-                continue
-
-            bus0 = buses.loc[bus0_name]
-            bus1 = buses.loc[bus1_name]
-
-            if (
-                bus0.get("x") is None
-                or bus0.get("y") is None
-                or bus1.get("x") is None
-                or bus1.get("y") is None
-            ):
-                continue
-
-            if (
-                bus0[["x", "y"]].isna().any()
-                or bus1[["x", "y"]].isna().any()
-            ):
+            location0 = self._location_for_bus(str(component["bus0"]))
+            location1 = self._location_for_bus(str(component["bus1"]))
+            if location0 is None or location1 is None:
                 continue
 
             plot_arguments: dict[str, Any] = {
                 "linewidth": 1.2,
                 "zorder": 4,
             }
-
             if CARTOPY_AVAILABLE:
-                plot_arguments["transform"] = (
-                    ccrs.PlateCarree()
-                )
+                plot_arguments["transform"] = ccrs.PlateCarree()
 
             self.map_axes.plot(
-                [
-                    bus0["x"],
-                    bus1["x"],
-                ],
-                [
-                    bus0["y"],
-                    bus1["y"],
-                ],
+                [location0.longitude, location1.longitude],
+                [location0.latitude, location1.latitude],
                 **plot_arguments,
             )
+
+    def _location_for_bus(
+        self,
+        bus_name: str,
+    ) -> NetworkLocation | None:
+        for location in self.locations.values():
+            if bus_name in location.bus_names:
+                return location
+        return None
 
 
 class LineCreationDialog(QDialog):
