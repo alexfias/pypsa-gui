@@ -16,6 +16,9 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup
 from pypsa_gui.models.network_location import NetworkLocation
+from pypsa_gui.ui.pages.network_builder.location_editor import (
+    LocationEditor,
+)
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -80,6 +83,7 @@ class NetworkBuilderPage(QWidget):
         self.project_is_modified = False
         self.topology_tool_mode = TopologyToolMode.SELECT
         self.pending_connection_location: str | None = None
+        self.selected_location_id: str | None = None
 
         self.page_stack = QStackedWidget(self)
 
@@ -117,6 +121,17 @@ class NetworkBuilderPage(QWidget):
 
         if network is None:
             self.locations = {}
+            self.selected_location_id = None
+
+            if hasattr(
+                self,
+                "location_editor",
+            ):
+                self.location_editor.set_context(
+                    network=None,
+                    location=None,
+                )
+
             self.show_welcome_view()
             return
 
@@ -128,7 +143,13 @@ class NetworkBuilderPage(QWidget):
             self.locations = locations
             self._ensure_locations_for_unassigned_buses()
 
+        self.selected_location_id = None
+        self.location_editor.set_context(
+            network=None,
+            location=None,
+        )
         self.show_editor_view()
+        self.show_geographic_editor()
         self.refresh_map()
 
     def set_project_state(
@@ -166,6 +187,46 @@ class NetworkBuilderPage(QWidget):
         self.page_stack.setCurrentWidget(
             self.editor_page
         )
+
+    def show_geographic_editor(self) -> None:
+        if hasattr(
+            self,
+            "editor_stack",
+        ):
+            self.editor_stack.setCurrentWidget(
+                self.geographic_editor_page
+            )
+
+        if self.network is not None:
+            self.refresh_map()
+
+    def open_location(
+        self,
+        location_id: str,
+    ) -> None:
+        if self.network is None:
+            return
+
+        location = self.locations.get(
+            location_id
+        )
+
+        if location is None:
+            return
+
+        self.selected_location_id = location_id
+
+        self.location_editor.set_context(
+            network=self.network,
+            location=location,
+        )
+        self.editor_stack.setCurrentWidget(
+            self.location_editor
+        )
+
+    def _on_location_editor_modified(self) -> None:
+        self._mark_network_modified()
+        self.refresh_map()
 
     # ------------------------------------------------------------------
     # Welcome page
@@ -340,7 +401,17 @@ class NetworkBuilderPage(QWidget):
     def _create_editor_page(self) -> QWidget:
         page = QWidget(self)
 
-        root_layout = QVBoxLayout(page)
+        outer_layout = QVBoxLayout(page)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.editor_stack = QStackedWidget(page)
+
+        self.geographic_editor_page = QWidget(
+            self.editor_stack
+        )
+        root_layout = QVBoxLayout(
+            self.geographic_editor_page
+        )
         root_layout.setContentsMargins(16, 16, 16, 16)
         root_layout.setSpacing(10)
 
@@ -463,6 +534,30 @@ class NetworkBuilderPage(QWidget):
             TopologyToolMode.SELECT
         )
         self._refresh_project_title()
+
+        self.location_editor = LocationEditor(
+            self.editor_stack
+        )
+        self.location_editor.back_requested.connect(
+            self.show_geographic_editor
+        )
+        self.location_editor.network_modified.connect(
+            self._on_location_editor_modified
+        )
+
+        self.editor_stack.addWidget(
+            self.geographic_editor_page
+        )
+        self.editor_stack.addWidget(
+            self.location_editor
+        )
+        self.editor_stack.setCurrentWidget(
+            self.geographic_editor_page
+        )
+
+        outer_layout.addWidget(
+            self.editor_stack
+        )
 
         return page
 
@@ -756,8 +851,8 @@ class NetworkBuilderPage(QWidget):
 
         instructions = {
             TopologyToolMode.SELECT: (
-                "Mode: Select — click a location, line, or link "
-                "to inspect it."
+                "Mode: Select — click a location to select it; "
+                "double-click to open its internal topology."
             ),
             TopologyToolMode.ADD_LOCATION: (
                 "Mode: Add location — click anywhere on the map "
@@ -880,6 +975,41 @@ class NetworkBuilderPage(QWidget):
                 longitude=float(event.xdata),
                 latitude=float(event.ydata),
             )
+            return
+
+        if self.topology_tool_mode == TopologyToolMode.SELECT:
+            location_id = self._find_location_near_event(
+                event
+            )
+
+            if location_id is None:
+                self.selected_location_id = None
+                self.tool_status_label.setText(
+                    "No location selected."
+                )
+                self.refresh_map()
+                return
+
+            self.selected_location_id = location_id
+            location = self.locations[location_id]
+
+            if bool(
+                getattr(
+                    event,
+                    "dblclick",
+                    False,
+                )
+            ):
+                self.open_location(
+                    location_id
+                )
+                return
+
+            self.tool_status_label.setText(
+                f'Selected location "{location.name}". '
+                "Double-click it to open the internal topology."
+            )
+            self.refresh_map()
             return
 
         if self.topology_tool_mode in {
@@ -1616,14 +1746,18 @@ class NetworkBuilderPage(QWidget):
             location.latitude
             for _, location in location_items
         ]
-        colours = [
-            (
-                "#d62728"
-                if self.pending_connection_location == location_id
-                else "#1f77b4"
-            )
-            for location_id, _ in location_items
-        ]
+        colours = []
+
+        for location_id, _ in location_items:
+            if (
+                self.pending_connection_location
+                == location_id
+            ):
+                colours.append("#d62728")
+            elif self.selected_location_id == location_id:
+                colours.append("#ff7f0e")
+            else:
+                colours.append("#1f77b4")
 
         plot_arguments: dict[str, Any] = {
             "s": 65,
