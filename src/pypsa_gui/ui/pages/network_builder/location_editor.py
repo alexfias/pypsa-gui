@@ -49,6 +49,7 @@ class LocationEditor(QWidget):
         self.network: Any | None = None
         self.location: NetworkLocation | None = None
         self.time_series_library = TimeSeriesLibrary()
+        self.profile_loading_error: str | None = None
 
         self._build_ui()
         self._set_editor_enabled(False)
@@ -66,6 +67,12 @@ class LocationEditor(QWidget):
         self.location = location
 
         self.time_series_library.clear()
+        self.profile_loading_error = None
+
+        try:
+            self.time_series_library.load_packaged_profiles()
+        except Exception as exc:
+            self.profile_loading_error = str(exc)
 
         if network is not None:
             self.time_series_library.register_network_profiles(
@@ -543,6 +550,21 @@ class LocationEditor(QWidget):
             self.time_series_library.list_profiles()
         )
 
+        if (
+            not available_profiles
+            and self.profile_loading_error is not None
+        ):
+            QMessageBox.warning(
+                self,
+                "Profiles Could Not Be Loaded",
+                (
+                    "Packaged time-series profiles could not be "
+                    "loaded. Constant availability remains available."
+                    "\n\n"
+                    f"{self.profile_loading_error}"
+                ),
+            )
+
         dialog = GeneratorCreationDialog(
             bus_names=bus_names,
             suggested_name=self._next_component_name(
@@ -576,7 +598,10 @@ class LocationEditor(QWidget):
                 "carrier": definition.carrier,
                 "p_nom": definition.p_nom,
                 "p_nom_extendable": definition.extendable,
+                "capital_cost": definition.capital_cost,
                 "marginal_cost": definition.marginal_cost,
+                "efficiency": definition.efficiency,
+                "lifetime": definition.lifetime,
             }
 
             if (

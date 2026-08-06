@@ -37,7 +37,10 @@ class GeneratorDefinition:
     bus: str
     carrier: str
     p_nom: float
+    capital_cost: float
     marginal_cost: float
+    efficiency: float
+    lifetime: float
     extendable: bool
     profile_mode: GeneratorProfileMode
     constant_p_max_pu: float
@@ -191,6 +194,17 @@ class GeneratorCreationDialog(QDialog):
         self.p_nom_spin.setSuffix(" MW")
         self.p_nom_spin.setValue(100.0)
 
+        self.capital_cost_spin = QDoubleSpinBox()
+        self.capital_cost_spin.setRange(
+            0.0,
+            1_000_000_000.0,
+        )
+        self.capital_cost_spin.setDecimals(4)
+        self.capital_cost_spin.setSuffix(
+            " currency/MW"
+        )
+        self.capital_cost_spin.setValue(0.0)
+
         self.marginal_cost_spin = QDoubleSpinBox()
         self.marginal_cost_spin.setRange(
             -1_000_000.0,
@@ -199,6 +213,24 @@ class GeneratorCreationDialog(QDialog):
         self.marginal_cost_spin.setDecimals(4)
         self.marginal_cost_spin.setSuffix(" currency/MWh")
         self.marginal_cost_spin.setValue(0.0)
+
+        self.efficiency_spin = QDoubleSpinBox()
+        self.efficiency_spin.setRange(
+            0.0,
+            1.0,
+        )
+        self.efficiency_spin.setDecimals(4)
+        self.efficiency_spin.setSingleStep(0.01)
+        self.efficiency_spin.setValue(1.0)
+
+        self.lifetime_spin = QDoubleSpinBox()
+        self.lifetime_spin.setRange(
+            0.0,
+            1_000.0,
+        )
+        self.lifetime_spin.setDecimals(2)
+        self.lifetime_spin.setSuffix(" years")
+        self.lifetime_spin.setValue(25.0)
 
         self.extendable_combo = QComboBox()
         self.extendable_combo.addItem(
@@ -232,15 +264,27 @@ class GeneratorCreationDialog(QDialog):
 
         self.profile_combo = QComboBox()
 
-        for profile in available_profiles:
+        if not available_profiles:
             self.profile_combo.addItem(
-                (
-                    f"{profile.name} — "
-                    f"{profile.region} — "
-                    f"CF {profile.capacity_factor:.3f}"
-                ),
-                profile.id,
+                "No time-series profiles available",
+                None,
             )
+        else:
+            for profile in available_profiles:
+                source_type = profile.metadata.get(
+                    "source_type",
+                    "profile",
+                )
+
+                self.profile_combo.addItem(
+                    (
+                        f"{profile.name} — "
+                        f"{profile.region} — "
+                        f"CF {profile.capacity_factor:.3f} — "
+                        f"{source_type}"
+                    ),
+                    profile.id,
+                )
 
         self.target_capacity_factor_spin = QDoubleSpinBox()
         self.target_capacity_factor_spin.setRange(0.0, 1.0)
@@ -265,8 +309,20 @@ class GeneratorCreationDialog(QDialog):
             self.p_nom_spin,
         )
         form.addRow(
+            "Capital cost",
+            self.capital_cost_spin,
+        )
+        form.addRow(
             "Marginal cost",
             self.marginal_cost_spin,
+        )
+        form.addRow(
+            "Efficiency",
+            self.efficiency_spin,
+        )
+        form.addRow(
+            "Lifetime",
+            self.lifetime_spin,
         )
         form.addRow(
             "Extendable",
@@ -291,10 +347,17 @@ class GeneratorCreationDialog(QDialog):
 
         layout.addLayout(form)
 
+        self._available_profiles = list(
+            available_profiles
+        )
+
         self.profile_mode_combo.currentIndexChanged.connect(
             self._update_profile_controls
         )
-        self._update_profile_controls()
+        self.carrier_edit.textChanged.connect(
+            self._refresh_profile_choices
+        )
+        self._refresh_profile_choices()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -307,6 +370,66 @@ class GeneratorCreationDialog(QDialog):
             self.reject
         )
         layout.addWidget(buttons)
+
+    def _refresh_profile_choices(self) -> None:
+        selected_profile_id = (
+            self.profile_combo.currentData()
+        )
+        carrier = (
+            self.carrier_edit.text()
+            .strip()
+            .lower()
+        )
+
+        matching_profiles = [
+            profile
+            for profile in self._available_profiles
+            if (
+                not carrier
+                or not profile.carrier
+                or profile.carrier.strip().lower()
+                == carrier
+            )
+        ]
+
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+
+        if not matching_profiles:
+            self.profile_combo.addItem(
+                "No matching time-series profiles",
+                None,
+            )
+        else:
+            selected_index = 0
+
+            for index, profile in enumerate(
+                matching_profiles
+            ):
+                source_type = profile.metadata.get(
+                    "source_type",
+                    "profile",
+                )
+
+                self.profile_combo.addItem(
+                    (
+                        f"{profile.name} — "
+                        f"{profile.region} — "
+                        f"CF {profile.capacity_factor:.3f} — "
+                        f"{source_type}"
+                    ),
+                    profile.id,
+                )
+
+                if profile.id == selected_profile_id:
+                    selected_index = index
+
+            self.profile_combo.setCurrentIndex(
+                selected_index
+            )
+
+        self.profile_combo.blockSignals(False)
+        self._update_profile_controls()
 
     def _update_profile_controls(self) -> None:
         mode = self.profile_mode_combo.currentData()
@@ -373,7 +496,10 @@ class GeneratorCreationDialog(QDialog):
             bus=self.bus_combo.currentText(),
             carrier=self.carrier_edit.text().strip(),
             p_nom=self.p_nom_spin.value(),
+            capital_cost=self.capital_cost_spin.value(),
             marginal_cost=self.marginal_cost_spin.value(),
+            efficiency=self.efficiency_spin.value(),
+            lifetime=self.lifetime_spin.value(),
             extendable=bool(
                 self.extendable_combo.currentData()
             ),

@@ -350,6 +350,14 @@ class TimeSeriesLibrary:
                     )
                 )
 
+            # Keep the timezone in profile metadata, but use UTC-naive
+            # timestamps internally because PyPSA snapshots are commonly
+            # represented without timezone information.
+            timestamps = (
+                timestamps.dt.tz_convert("UTC")
+                .dt.tz_localize(None)
+            )
+
         values = pd.to_numeric(
             frame[value_column],
             errors="coerce",
@@ -685,6 +693,14 @@ class TimeSeriesLibrary:
                     )
                 )
 
+            # Keep the timezone in profile metadata, but use UTC-naive
+            # timestamps internally because PyPSA snapshots are commonly
+            # represented without timezone information.
+            timestamps = (
+                timestamps.dt.tz_convert("UTC")
+                .dt.tz_localize(None)
+            )
+
         values = pd.to_numeric(
             frame[value_column],
             errors="coerce",
@@ -989,6 +1005,7 @@ class TimeSeriesLibrary:
         profile_id: str,
         *,
         target_capacity_factor: float | None = None,
+        initialize_default_snapshots: bool = True,
     ) -> pd.Series:
         if generator_name not in network.generators.index:
             raise KeyError(
@@ -996,15 +1013,30 @@ class TimeSeriesLibrary:
                 f"{generator_name}"
             )
 
+        profile = self.get_profile(
+            profile_id
+        )
+
+        if (
+            initialize_default_snapshots
+            and self._has_default_placeholder_snapshots(
+                network
+            )
+        ):
+            network.set_snapshots(
+                profile.values.index
+            )
+
         if target_capacity_factor is None:
-            values = self.aligned_values(
-                profile_id,
-                network.snapshots,
+            values = profile.aligned_to(
+                network.snapshots
             )
         else:
-            values = self.scaled_values(
-                profile_id,
-                network.snapshots,
+            aligned = profile.aligned_to(
+                network.snapshots
+            )
+            values = self.scale_to_capacity_factor(
+                aligned,
                 target_capacity_factor,
             )
 
@@ -1014,3 +1046,24 @@ class TimeSeriesLibrary:
         ] = values
 
         return values
+
+    @staticmethod
+    def _has_default_placeholder_snapshots(
+        network: pypsa.Network,
+    ) -> bool:
+        """
+        Return True for a newly created PyPSA network that still uses
+        the single default placeholder snapshot, usually ``"now"``.
+        """
+        snapshots = network.snapshots
+
+        if len(snapshots) != 1:
+            return False
+
+        return (
+            str(snapshots[0])
+            .strip()
+            .lower()
+            == "now"
+        )
+
