@@ -1,0 +1,114 @@
+[
+  {
+    "id": "example-de-solar-2019",
+    "name": "Germany Solar 2019",
+    "file": "profiles/de_solar_2019.csv",
+    "carrier": "solar",
+    "profile_kind": "p_max_pu",
+    "spatial_scope": {
+      "type": "country",
+      "code": "DE",
+      "name": "Germany"
+    },
+    "temporal_scope": {
+      "year": 2019,
+      "resolution": "1h",
+      "timezone": "UTC"
+    },
+    "source": {
+      "provider": "PyPSA GUI Example Profiles",
+      "method": "local_file",
+      "reference": null
+    },
+    "units": "per_unit",
+    "timestamp_column": "time",
+    "timestamp_format": "%d-%m-%Y %H:%M",
+    "day_first": true,
+    "value_column": "p_max_pu",
+    "description": "Example hourly solar availability profile for Germany."
+  },
+  {
+    "id": "example-de-wind-onshore-2019",
+    "name": "Germany Onshore Wind 2019",
+    "file": "profiles/de_wind_onshore_2019.csv",
+    "carrier": "onwind",
+    "profile_kind": "p_max_pu",
+    "spatial_scope": {
+      "type": "country",
+      "code": "DE",
+      "name": "Germany"
+    },
+    "temporal_scope": {
+      "year": 2019,
+      "resolution": "1h",
+      "timezone": "UTC"
+    },
+    "source": {
+      "provider": "PyPSA GUI Example Profiles",
+      "method": "local_file",
+      "reference": null
+    },
+    "units": "per_unit",
+    "timestamp_column": "time",
+    "timestamp_format": "%d-%m-%Y %H:%M",
+    "day_first": true,
+    "value_column": "p_max_pu",
+    "description": "Example hourly onshore wind availability profile for Germany."
+  },
+  {
+    "id": "example-es-solar-2019",
+    "name": "Spain Solar 2019",
+    "file": "profiles/es_solar_2019.csv",
+    "carrier": "solar",
+    "profile_kind": "p_max_pu",
+    "spatial_scope": {
+      "type": "country",
+      "code": "ES",
+      "name": "Spain"
+    },
+    "temporal_scope": {
+      "year": 2019,
+      "resolution": "1h",
+      "timezone": "UTC"
+    },
+    "source": {
+      "provider": "PyPSA GUI Example Profiles",
+      "method": "local_file",
+      "reference": null
+    },
+    "units": "per_unit",
+    "timestamp_column": "time",
+    "timestamp_format": "%d-%m-%Y %H:%M",
+    "day_first": true,
+    "value_column": "p_max_pu",
+    "description": "Example hourly solar availability profile for Spain."
+  },
+  {
+    "id": "example-es-wind-onshore-2019",
+    "name": "Spain Onshore Wind 2019",
+    "file": "profiles/es_wind_onshore_2019.csv",
+    "carrier": "onwind",
+    "profile_kind": "p_max_pu",
+    "spatial_scope": {
+      "type": "country",
+      "code": "ES",
+      "name": "Spain"
+    },
+    "temporal_scope": {
+      "year": 2019,
+      "resolution": "1h",
+      "timezone": "UTC"
+    },
+    "source": {
+      "provider": "PyPSA GUI Example Profiles",
+      "method": "local_file",
+      "reference": null
+    },
+    "units": "per_unit",
+    "timestamp_column": "time",
+    "timestamp_format": "%d-%m-%Y %H:%M",
+    "day_first": true,
+    "value_column": "p_max_pu",
+    "description": "Example hourly onshore wind availability profile for Spain."
+  }
+]
