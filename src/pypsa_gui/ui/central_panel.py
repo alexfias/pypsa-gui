@@ -58,6 +58,16 @@ class CentralPanel(QWidget):
     save_network_as_requested = Signal()
     network_modified = Signal()
 
+    LAZY_PAGE_NAMES = {
+        "Prices",
+        "Congestion",
+        "Storage",
+        "Emissions",
+        "Network Map",
+        "Time Series",
+        "Capacities",
+    }
+
     def __init__(
         self,
         enabled_sections: set[str] | None = None,
@@ -77,6 +87,12 @@ class CentralPanel(QWidget):
 
         self.stack = QStackedWidget()
         self.pages: dict[str, QWidget] = {}
+
+        self._current_network: Any | None = None
+        self._current_locations: (
+            dict[str, NetworkLocation] | None
+        ) = None
+        self._dirty_lazy_pages: set[str] = set()
 
         self._core_page_factories = self._build_page_factories()
         self._module_pages: dict[str, QWidget] = {}
@@ -144,6 +160,24 @@ class CentralPanel(QWidget):
         # Research-module pages are recreated separately
         # by MainWindow.
 
+        self._dirty_lazy_pages = {
+            page_name
+            for page_name in self.LAZY_PAGE_NAMES
+            if page_name in self.pages
+        }
+
+        current_widget = self.stack.currentWidget()
+
+        if current_widget is not None:
+            current_name = self._page_name_for_widget(
+                current_widget
+            )
+
+            if current_name is not None:
+                self._ensure_page_network_is_current(
+                    current_name
+                )
+
     def _clear_pages(self) -> None:
         while self.stack.count():
             widget = self.stack.widget(0)
@@ -154,6 +188,7 @@ class CentralPanel(QWidget):
 
         self.pages.clear()
         self._module_pages.clear()
+        self._dirty_lazy_pages.clear()
 
     def _add_page(
         self,
@@ -246,8 +281,13 @@ class CentralPanel(QWidget):
     ) -> None:
         widget = self.pages.get(name)
 
-        if widget is not None:
-            self.stack.setCurrentWidget(widget)
+        if widget is None:
+            return
+
+        self._ensure_page_network_is_current(
+            name
+        )
+        self.stack.setCurrentWidget(widget)
 
     def show_page(
         self,
@@ -260,18 +300,134 @@ class CentralPanel(QWidget):
         network: Any,
         locations: dict[str, NetworkLocation] | None = None,
     ) -> None:
-        for page in self.pages.values():
+        self._current_network = network
+        self._current_locations = locations
+
+        self._dirty_lazy_pages = {
+            page_name
+            for page_name in self.LAZY_PAGE_NAMES
+            if page_name in self.pages
+        }
+
+        current_widget = self.stack.currentWidget()
+        current_page_name = (
+            self._page_name_for_widget(
+                current_widget
+            )
+            if current_widget is not None
+            else None
+        )
+
+        for page_name, page in self.pages.items():
             if isinstance(page, NetworkBuilderPage):
                 page.set_network_context(
                     network=network,
                     locations=locations,
                 )
-            elif hasattr(page, "set_network"):
-                page.set_network(network)
-            elif hasattr(page, "update_from_network"):
-                page.update_from_network(network)
-            elif hasattr(page, "update_summary"):
-                page.update_summary(network)
+                continue
+
+            if page_name in self.LAZY_PAGE_NAMES:
+                continue
+
+            self._assign_network_to_page(
+                page
+            )
+
+        if (
+            current_page_name is not None
+            and current_page_name in self.LAZY_PAGE_NAMES
+        ):
+            self._ensure_page_network_is_current(
+                current_page_name
+            )
+
+    def _assign_network_to_page(
+        self,
+        page: QWidget,
+    ) -> None:
+        if hasattr(page, "set_network"):
+            page.set_network(
+                self._current_network
+            )
+        elif hasattr(page, "update_from_network"):
+            page.update_from_network(
+                self._current_network
+            )
+        elif hasattr(page, "update_summary"):
+            page.update_summary(
+                self._current_network
+            )
+
+    def _ensure_page_network_is_current(
+        self,
+        page_name: str,
+    ) -> None:
+        if page_name not in self._dirty_lazy_pages:
+            return
+
+        page = self.pages.get(
+            page_name
+        )
+
+        if page is None:
+            self._dirty_lazy_pages.discard(
+                page_name
+            )
+            return
+
+        self._assign_network_to_page(
+            page
+        )
+        self._dirty_lazy_pages.discard(
+            page_name
+        )
+
+    def _page_name_for_widget(
+        self,
+        widget: QWidget,
+    ) -> str | None:
+        for page_name, page in self.pages.items():
+            if page is widget:
+                return page_name
+
+        return None
+
+    def refresh_after_network_edit(self) -> None:
+        """
+        Refresh lightweight pages after an in-place network edit.
+
+        Heavy analysis and plotting pages are only marked dirty and
+        receive the updated network when the user opens them.
+        """
+        immediate_pages = {
+            "Overview",
+            "Summary",
+            "Buses",
+            "Generators",
+            "Loads",
+            "Lines",
+            "Links",
+            "Stores",
+            "Storage Units",
+            "Global Constraints",
+            "Optimisation",
+        }
+
+        for page_name in immediate_pages:
+            page = self.pages.get(
+                page_name
+            )
+
+            if page is not None:
+                self._assign_network_to_page(
+                    page
+                )
+
+        self._dirty_lazy_pages.update(
+            page_name
+            for page_name in self.LAZY_PAGE_NAMES
+            if page_name in self.pages
+        )
 
     def set_network(
         self,

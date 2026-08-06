@@ -599,20 +599,44 @@ class MainWindow(QMainWindow):
     def _refresh_active_session_ui(self) -> None:
         session = self.active_session()
 
-        if session is None:
+        default_sections = {
+            "overview",
+            "build",
+            "components",
+            "analysis",
+            "plots",
+            "run",
+            "research_modules",
+        }
+
+        required_sections = (
+            default_sections
+            if session is None
+            else set(
+                session.view_options.enabled_sections
+            )
+        )
+
+        pages_rebuilt = (
+            self.central_panel.enabled_sections
+            != required_sections
+        )
+
+        if pages_rebuilt:
             self.central_panel.rebuild_pages(
-                {
-                    "overview",
-                    "build",
-                    "components",
-                    "analysis",
-                    "plots",
-                    "run",
-                    "research_modules",
-                }
+                required_sections
             )
 
-            self._refresh_research_modules()
+        if session is None:
+            if pages_rebuilt:
+                self._refresh_research_modules()
+            else:
+                for module in self.modules:
+                    module.set_network(
+                        None
+                    )
+
+                self.central_panel.clear_module_pages()
 
             self.central_panel.set_network_context(
                 network=None,
@@ -627,11 +651,16 @@ class MainWindow(QMainWindow):
 
             return
 
-        self.central_panel.rebuild_pages(
-            session.view_options.enabled_sections
-        )
-
-        self._refresh_research_modules()
+        # Research-module widgets must be recreated only when the page
+        # structure changed. Existing module pages receive the new network
+        # through CentralPanel.set_network_context() below.
+        if pages_rebuilt:
+            self._refresh_research_modules()
+        else:
+            for module in self.modules:
+                module.set_network(
+                    session.network
+                )
 
         self.central_panel.set_network_context(
             network=session.network,
@@ -756,8 +785,8 @@ class MainWindow(QMainWindow):
         )
 
     def on_loaded_network_clicked(
-        self,
-        item: QListWidgetItem,
+            self,
+            item: QListWidgetItem,
     ) -> None:
         session_id = item.data(
             Qt.ItemDataRole.UserRole
@@ -786,7 +815,7 @@ class MainWindow(QMainWindow):
                 "Switched active session to: "
                 f"{session.name}"
             )
-
+            
     # ------------------------------------------------------------------
     # File loading and saving
     # ------------------------------------------------------------------
