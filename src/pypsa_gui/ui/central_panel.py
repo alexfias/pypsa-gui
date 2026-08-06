@@ -35,6 +35,8 @@ from pypsa_gui.ui.pages.scenario_builder_page import (
 )
 from pypsa_gui.ui.pages.summary_page import SummaryPage
 from pypsa_gui.ui.pages.time_series_page import TimeSeriesPage
+from pypsa_gui.ui.pages.workflow_page import WorkflowPage
+from pypsa_gui.workflows.models import WorkflowRecord
 
 
 class PlaceholderPage(QWidget):
@@ -89,6 +91,7 @@ class CentralPanel(QWidget):
         self.pages: dict[str, QWidget] = {}
 
         self._current_network: Any | None = None
+        self._current_workflow: WorkflowRecord | None = None
         self._current_locations: (
             dict[str, NetworkLocation] | None
         ) = None
@@ -107,6 +110,7 @@ class CentralPanel(QWidget):
     ) -> dict[str, Callable[[], QWidget]]:
         return {
             "Overview": OverviewPage,
+            "Workflow": WorkflowPage,
             "Scenario Builder": ScenarioBuilderPage,
             "Network Builder": NetworkBuilderPage,
             "Summary": SummaryPage,
@@ -197,6 +201,12 @@ class CentralPanel(QWidget):
     ) -> None:
         self.pages[name] = widget
         self.stack.addWidget(widget)
+
+        if (
+            name == "Workflow"
+            and isinstance(widget, WorkflowPage)
+        ):
+            widget.set_workflow(self._current_workflow)
 
         if (
             name == "Overview"
@@ -447,6 +457,17 @@ class CentralPanel(QWidget):
             network=network,
             locations=locations,
         )
+
+    def set_workflow(
+        self,
+        workflow: WorkflowRecord | None,
+    ) -> None:
+        self._current_workflow = workflow
+
+        page = self.pages.get("Workflow")
+
+        if isinstance(page, WorkflowPage):
+            page.set_workflow(workflow)
 
     def set_network_builder_project_state(
         self,

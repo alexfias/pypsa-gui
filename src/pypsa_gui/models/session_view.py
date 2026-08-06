@@ -29,6 +29,7 @@ WORKSPACE_PRESETS: dict[str, set[str]] = {
 NAVIGATION_STRUCTURE: dict[str, list[str]] = {
     "overview": [
         "Overview",
+        "Workflow",
     ],
     "build": [
         "Scenario Builder",
@@ -79,6 +80,7 @@ SECTION_TITLES: dict[str, str] = {
 
 PAGE_TO_SECTION: dict[str, str] = {
     "Overview": "overview",
+    "Workflow": "overview",
 
     "Scenario Builder": "build",
     "Network Builder": "build",

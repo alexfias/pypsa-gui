@@ -48,6 +48,8 @@ from pypsa_gui.ui.dialogs.workspace_selection_dialog import (
 from pypsa_gui.workers.optimisation_worker import (
     OptimisationWorker,
 )
+from pypsa_gui.workflows.models import WorkflowRecord
+from pypsa_gui.workflows.recorder import WorkflowRecorder
 
 
 class MainWindow(QMainWindow):
@@ -78,12 +80,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def active_session(
-        self,
+            self,
     ) -> NetworkSession | None:
         return self.network_store.get_active_session()
 
     def active_network(
-        self,
+            self,
     ) -> pypsa.Network | None:
         session = self.active_session()
 
@@ -94,7 +96,7 @@ class MainWindow(QMainWindow):
         )
 
     def active_file_path(
-        self,
+            self,
     ) -> Path | None:
         session = self.active_session()
 
@@ -401,7 +403,7 @@ class MainWindow(QMainWindow):
                     )
 
                     if not module.is_available(
-                        network
+                            network
                     ):
                         continue
 
@@ -431,7 +433,7 @@ class MainWindow(QMainWindow):
         self.navigation_tree.blockSignals(False)
 
     def _create_loaded_networks_dock(
-        self,
+            self,
     ) -> None:
         self.loaded_networks_list = QListWidget(
             self
@@ -458,9 +460,9 @@ class MainWindow(QMainWindow):
         )
 
     def on_navigation_item_clicked(
-        self,
-        item: QTreeWidgetItem,
-        column: int,
+            self,
+            item: QTreeWidgetItem,
+            column: int,
     ) -> None:
         del column
 
@@ -516,8 +518,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def log(
-        self,
-        message: str,
+            self,
+            message: str,
     ) -> None:
         self.log_output.append(
             message
@@ -528,8 +530,8 @@ class MainWindow(QMainWindow):
         )
 
     def _set_optimisation_running_state(
-        self,
-        is_running: bool,
+            self,
+            is_running: bool,
     ) -> None:
         self.optimisation_running = is_running
 
@@ -562,7 +564,7 @@ class MainWindow(QMainWindow):
             )
 
             if not module.is_available(
-                network
+                    network
             ):
                 continue
 
@@ -573,15 +575,15 @@ class MainWindow(QMainWindow):
                 )
 
                 if hasattr(
-                    page,
-                    "set_network",
+                        page,
+                        "set_network",
                 ):
                     page.set_network(
                         network
                     )
                 elif hasattr(
-                    page,
-                    "update_from_network",
+                        page,
+                        "update_from_network",
                 ):
                     page.update_from_network(
                         network
@@ -618,8 +620,8 @@ class MainWindow(QMainWindow):
         )
 
         pages_rebuilt = (
-            self.central_panel.enabled_sections
-            != required_sections
+                self.central_panel.enabled_sections
+                != required_sections
         )
 
         if pages_rebuilt:
@@ -642,6 +644,7 @@ class MainWindow(QMainWindow):
                 network=None,
                 locations=None,
             )
+            self.central_panel.set_workflow(None)
 
             self._rebuild_navigation_tree()
             self.setWindowTitle(
@@ -665,6 +668,9 @@ class MainWindow(QMainWindow):
         self.central_panel.set_network_context(
             network=session.network,
             locations=session.locations,
+        )
+        self.central_panel.set_workflow(
+            session.workflow
         )
         self.central_panel.set_network_builder_project_state(
             name=session.name,
@@ -699,11 +705,12 @@ class MainWindow(QMainWindow):
         self._refresh_loaded_networks_dock()
 
     def _add_network_session(
-        self,
-        network: pypsa.Network,
-        source_path: Path | None,
-        view_options: SessionViewOptions,
-        name: str | None = None,
+            self,
+            network: pypsa.Network,
+            source_path: Path | None,
+            view_options: SessionViewOptions,
+            name: str | None = None,
+            workflow: WorkflowRecord | None = None,
     ) -> None:
         session_name = name or (
             source_path.stem
@@ -718,6 +725,7 @@ class MainWindow(QMainWindow):
             source_path=source_path,
             is_modified=False,
             view_options=view_options,
+            workflow=workflow or WorkflowRecord(),
         )
 
         self.network_store.add_session(
@@ -727,7 +735,7 @@ class MainWindow(QMainWindow):
         self._refresh_active_session_ui()
 
     def _refresh_loaded_networks_dock(
-        self,
+            self,
     ) -> None:
         self.loaded_networks_list.blockSignals(
             True
@@ -761,7 +769,7 @@ class MainWindow(QMainWindow):
 
         if active_session is not None:
             for row in range(
-                self.loaded_networks_list.count()
+                    self.loaded_networks_list.count()
             ):
                 item = (
                     self.loaded_networks_list.item(
@@ -770,10 +778,10 @@ class MainWindow(QMainWindow):
                 )
 
                 if (
-                    item.data(
-                        Qt.ItemDataRole.UserRole
-                    )
-                    == active_session.id
+                        item.data(
+                            Qt.ItemDataRole.UserRole
+                        )
+                        == active_session.id
                 ):
                     self.loaded_networks_list.setCurrentRow(
                         row
@@ -815,7 +823,7 @@ class MainWindow(QMainWindow):
                 "Switched active session to: "
                 f"{session.name}"
             )
-            
+
     # ------------------------------------------------------------------
     # File loading and saving
     # ------------------------------------------------------------------
@@ -851,10 +859,19 @@ class MainWindow(QMainWindow):
                 file_path
             )
 
+            workflow = WorkflowRecord()
+
+            recorder = WorkflowRecorder(workflow)
+
+            recorder.record_create_empty_network(
+                name=network_name,
+            )
+
             self._add_network_session(
                 network=network,
                 source_path=Path(file_path),
                 view_options=view_options,
+                workflow=workflow,
             )
         except Exception as exc:
             self.log(
@@ -901,10 +918,18 @@ class MainWindow(QMainWindow):
                 folder_path
             )
 
+            workflow = WorkflowRecord()
+            recorder = WorkflowRecorder(workflow)
+            recorder.record_load_network(
+                source_path=folder_path,
+                network_name=Path(folder_path).name,
+            )
+
             self._add_network_session(
                 network=network,
                 source_path=Path(folder_path),
                 view_options=view_options,
+                workflow=workflow,
             )
         except Exception as exc:
             self.log(
@@ -932,8 +957,8 @@ class MainWindow(QMainWindow):
             return
 
         if (
-            session.source_path is None
-            or session.source_path.suffix != ".nc"
+                session.source_path is None
+                or session.source_path.suffix != ".nc"
         ):
             self.save_as_netcdf()
             return
@@ -988,9 +1013,9 @@ class MainWindow(QMainWindow):
         default_path = (
             str(session.source_path)
             if (
-                session.source_path is not None
-                and session.source_path.suffix
-                == ".nc"
+                    session.source_path is not None
+                    and session.source_path.suffix
+                    == ".nc"
             )
             else str(
                 Path.home()
@@ -1126,8 +1151,8 @@ class MainWindow(QMainWindow):
 
     def on_cancel_optimisation(self) -> None:
         if (
-            not self.optimisation_running
-            or self.optimisation_runner is None
+                not self.optimisation_running
+                or self.optimisation_runner is None
         ):
             self.log(
                 "No optimisation is currently running."
@@ -1158,8 +1183,8 @@ class MainWindow(QMainWindow):
             )
 
     def _on_optimisation_finished(
-        self,
-        status,
+            self,
+            status,
     ) -> None:
         session = self.active_session()
 
@@ -1169,6 +1194,21 @@ class MainWindow(QMainWindow):
         )
 
         if session is not None:
+            recorder = WorkflowRecorder(
+                session.workflow
+            )
+            recorder.record_optimization(
+                solver="gurobi",
+                options={
+                    "Method": 2,
+                    "Crossover": 0,
+                },
+                status=str(status),
+            )
+            self.central_panel.set_workflow(
+                session.workflow
+            )
+
             session.is_modified = True
 
             # Rebuild the pages with the solved network.
@@ -1186,8 +1226,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_optimisation_failed(
-        self,
-        error_message: str,
+            self,
+            error_message: str,
     ) -> None:
         self.log(
             "Optimisation failed: "
@@ -1207,7 +1247,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_optimisation_thread_finished(
-        self,
+            self,
     ) -> None:
         self._set_optimisation_running_state(
             False
@@ -1228,8 +1268,8 @@ class MainWindow(QMainWindow):
         )
 
     def on_navigation_changed(
-        self,
-        item_text: str,
+            self,
+            item_text: str,
     ) -> None:
         if not item_text:
             return
@@ -1253,12 +1293,12 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(
-        self,
-        event,
+            self,
+            event,
     ) -> None:
         worker_running = (
-            self.optimisation_worker is not None
-            and self.optimisation_worker.isRunning()
+                self.optimisation_worker is not None
+                and self.optimisation_worker.isRunning()
         )
 
         if not worker_running:
@@ -1281,15 +1321,15 @@ class MainWindow(QMainWindow):
             event.ignore()
 
     def _ask_for_view_options(
-        self,
+            self,
     ) -> SessionViewOptions | None:
         dialog = WorkspaceSelectionDialog(
             self
         )
 
         if (
-            dialog.exec()
-            != QDialog.DialogCode.Accepted
+                dialog.exec()
+                != QDialog.DialogCode.Accepted
         ):
             return None
 
@@ -1369,6 +1409,12 @@ class MainWindow(QMainWindow):
         try:
             network = pypsa.Network()
 
+            workflow = WorkflowRecord()
+            recorder = WorkflowRecorder(workflow)
+            recorder.record_create_empty_network(
+                name=network_name,
+            )
+
             self._add_network_session(
                 network=network,
                 source_path=None,
@@ -1385,6 +1431,7 @@ class MainWindow(QMainWindow):
                     },
                 ),
                 name=network_name,
+                workflow=workflow,
             )
 
             session = self.active_session()
@@ -1440,6 +1487,12 @@ class MainWindow(QMainWindow):
                 definition=definition,
             )
 
+            workflow = WorkflowRecord()
+            recorder = WorkflowRecorder(workflow)
+            recorder.record_create_scenario(
+                definition,
+            )
+
             self._add_network_session(
                 network=network,
                 source_path=None,
@@ -1456,6 +1509,7 @@ class MainWindow(QMainWindow):
                     },
                 ),
                 name=definition.name,
+                workflow=workflow,
             )
         except Exception as exc:
             self.log(
