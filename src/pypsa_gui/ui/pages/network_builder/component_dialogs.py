@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+
+from pypsa_gui.models.time_series_profile import TimeSeriesProfile
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -22,6 +25,12 @@ class InternalBusDefinition:
     carrier: str
 
 
+class GeneratorProfileMode(str, Enum):
+    CONSTANT = "constant"
+    EXISTING = "existing"
+    SCALED = "scaled"
+
+
 @dataclass(frozen=True)
 class GeneratorDefinition:
     name: str
@@ -30,6 +39,10 @@ class GeneratorDefinition:
     p_nom: float
     marginal_cost: float
     extendable: bool
+    profile_mode: GeneratorProfileMode
+    constant_p_max_pu: float
+    profile_id: str | None
+    target_capacity_factor: float | None
 
 
 @dataclass(frozen=True)
@@ -144,6 +157,7 @@ class GeneratorCreationDialog(QDialog):
         self,
         bus_names: list[str],
         suggested_name: str,
+        available_profiles: list[TimeSeriesProfile],
         suggested_carrier: str = "solar",
         parent: QWidget | None = None,
     ) -> None:
@@ -196,6 +210,44 @@ class GeneratorCreationDialog(QDialog):
             True,
         )
 
+        self.profile_mode_combo = QComboBox()
+        self.profile_mode_combo.addItem(
+            "Constant availability",
+            GeneratorProfileMode.CONSTANT,
+        )
+        self.profile_mode_combo.addItem(
+            "Use existing time series",
+            GeneratorProfileMode.EXISTING,
+        )
+        self.profile_mode_combo.addItem(
+            "Scale existing time series",
+            GeneratorProfileMode.SCALED,
+        )
+
+        self.constant_p_max_pu_spin = QDoubleSpinBox()
+        self.constant_p_max_pu_spin.setRange(0.0, 1.0)
+        self.constant_p_max_pu_spin.setDecimals(4)
+        self.constant_p_max_pu_spin.setSingleStep(0.05)
+        self.constant_p_max_pu_spin.setValue(1.0)
+
+        self.profile_combo = QComboBox()
+
+        for profile in available_profiles:
+            self.profile_combo.addItem(
+                (
+                    f"{profile.name} — "
+                    f"{profile.region} — "
+                    f"CF {profile.capacity_factor:.3f}"
+                ),
+                profile.id,
+            )
+
+        self.target_capacity_factor_spin = QDoubleSpinBox()
+        self.target_capacity_factor_spin.setRange(0.0, 1.0)
+        self.target_capacity_factor_spin.setDecimals(4)
+        self.target_capacity_factor_spin.setSingleStep(0.01)
+        self.target_capacity_factor_spin.setValue(0.35)
+
         form.addRow(
             "Generator name",
             self.name_edit,
@@ -220,8 +272,29 @@ class GeneratorCreationDialog(QDialog):
             "Extendable",
             self.extendable_combo,
         )
+        form.addRow(
+            "Availability mode",
+            self.profile_mode_combo,
+        )
+        form.addRow(
+            "Constant p_max_pu",
+            self.constant_p_max_pu_spin,
+        )
+        form.addRow(
+            "Time-series profile",
+            self.profile_combo,
+        )
+        form.addRow(
+            "Target capacity factor",
+            self.target_capacity_factor_spin,
+        )
 
         layout.addLayout(form)
+
+        self.profile_mode_combo.currentIndexChanged.connect(
+            self._update_profile_controls
+        )
+        self._update_profile_controls()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -234,6 +307,22 @@ class GeneratorCreationDialog(QDialog):
             self.reject
         )
         layout.addWidget(buttons)
+
+    def _update_profile_controls(self) -> None:
+        mode = self.profile_mode_combo.currentData()
+
+        self.constant_p_max_pu_spin.setEnabled(
+            mode == GeneratorProfileMode.CONSTANT
+        )
+        self.profile_combo.setEnabled(
+            mode in {
+                GeneratorProfileMode.EXISTING,
+                GeneratorProfileMode.SCALED,
+            }
+        )
+        self.target_capacity_factor_spin.setEnabled(
+            mode == GeneratorProfileMode.SCALED
+        )
 
     def _validate_and_accept(self) -> None:
         if not self.name_edit.text().strip():
@@ -260,6 +349,22 @@ class GeneratorCreationDialog(QDialog):
             )
             return
 
+        mode = self.profile_mode_combo.currentData()
+
+        if (
+            mode in {
+                GeneratorProfileMode.EXISTING,
+                GeneratorProfileMode.SCALED,
+            }
+            and self.profile_combo.currentData() is None
+        ):
+            QMessageBox.warning(
+                self,
+                "No Profile Selected",
+                "Select a time-series profile.",
+            )
+            return
+
         self.accept()
 
     def definition(self) -> GeneratorDefinition:
@@ -271,6 +376,23 @@ class GeneratorCreationDialog(QDialog):
             marginal_cost=self.marginal_cost_spin.value(),
             extendable=bool(
                 self.extendable_combo.currentData()
+            ),
+            profile_mode=self.profile_mode_combo.currentData(),
+            constant_p_max_pu=(
+                self.constant_p_max_pu_spin.value()
+            ),
+            profile_id=(
+                str(self.profile_combo.currentData())
+                if self.profile_combo.currentData() is not None
+                else None
+            ),
+            target_capacity_factor=(
+                self.target_capacity_factor_spin.value()
+                if (
+                    self.profile_mode_combo.currentData()
+                    == GeneratorProfileMode.SCALED
+                )
+                else None
             ),
         )
 

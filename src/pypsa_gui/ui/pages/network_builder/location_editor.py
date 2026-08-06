@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from pypsa_gui.models.network_location import NetworkLocation
+from pypsa_gui.services.time_series_library import TimeSeriesLibrary
 from pypsa_gui.ui.pages.network_builder.component_dialogs import (
     GeneratorCreationDialog,
+    GeneratorProfileMode,
     InternalBusCreationDialog,
     LoadCreationDialog,
     StorageUnitCreationDialog,
@@ -46,6 +48,7 @@ class LocationEditor(QWidget):
 
         self.network: Any | None = None
         self.location: NetworkLocation | None = None
+        self.time_series_library = TimeSeriesLibrary()
 
         self._build_ui()
         self._set_editor_enabled(False)
@@ -61,6 +64,13 @@ class LocationEditor(QWidget):
     ) -> None:
         self.network = network
         self.location = location
+
+        self.time_series_library.clear()
+
+        if network is not None:
+            self.time_series_library.register_network_profiles(
+                network
+            )
 
         enabled = (
             network is not None
@@ -529,12 +539,17 @@ class LocationEditor(QWidget):
             self._show_no_internal_bus_warning()
             return
 
+        available_profiles = (
+            self.time_series_library.list_profiles()
+        )
+
         dialog = GeneratorCreationDialog(
             bus_names=bus_names,
             suggested_name=self._next_component_name(
                 table_name="generators",
                 base_name="Generator",
             ),
+            available_profiles=available_profiles,
             suggested_carrier="solar",
             parent=self,
         )
@@ -556,16 +571,71 @@ class LocationEditor(QWidget):
             return
 
         try:
+            generator_attributes = {
+                "bus": definition.bus,
+                "carrier": definition.carrier,
+                "p_nom": definition.p_nom,
+                "p_nom_extendable": definition.extendable,
+                "marginal_cost": definition.marginal_cost,
+            }
+
+            if (
+                definition.profile_mode
+                == GeneratorProfileMode.CONSTANT
+            ):
+                generator_attributes["p_max_pu"] = (
+                    definition.constant_p_max_pu
+                )
+
             self.network.add(
                 "Generator",
                 definition.name,
-                bus=definition.bus,
-                carrier=definition.carrier,
-                p_nom=definition.p_nom,
-                p_nom_extendable=definition.extendable,
-                marginal_cost=definition.marginal_cost,
+                **generator_attributes,
             )
+
+            if (
+                definition.profile_mode
+                == GeneratorProfileMode.EXISTING
+            ):
+                if definition.profile_id is None:
+                    raise ValueError(
+                        "No availability profile was selected."
+                    )
+
+                self.time_series_library.apply_profile_to_generator(
+                    network=self.network,
+                    generator_name=definition.name,
+                    profile_id=definition.profile_id,
+                )
+
+            elif (
+                definition.profile_mode
+                == GeneratorProfileMode.SCALED
+            ):
+                if (
+                    definition.profile_id is None
+                    or definition.target_capacity_factor is None
+                ):
+                    raise ValueError(
+                        "The scaled profile configuration is incomplete."
+                    )
+
+                self.time_series_library.apply_profile_to_generator(
+                    network=self.network,
+                    generator_name=definition.name,
+                    profile_id=definition.profile_id,
+                    target_capacity_factor=(
+                        definition.target_capacity_factor
+                    ),
+                )
+
         except Exception as exc:
+            if definition.name in self.network.generators.index:
+                self.network.remove(
+                    "Generator",
+                    definition.name,
+                )
+
             QMessageBox.critical(
                 self,
                 "Add Generator Failed",
