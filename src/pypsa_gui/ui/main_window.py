@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -131,13 +132,26 @@ class MainWindow(QMainWindow):
         )
 
         self.save_action = QAction(
-            "Save As NetCDF...",
+            "Save",
             self,
         )
         self.save_action.setStatusTip(
-            "Save the current network as a .nc file"
+            "Save the current network"
         )
+        self.save_action.setShortcut("Ctrl+S")
         self.save_action.triggered.connect(
+            self.save_network
+        )
+
+        self.save_as_action = QAction(
+            "Save As NetCDF...",
+            self,
+        )
+        self.save_as_action.setStatusTip(
+            "Save the current network under a new name"
+        )
+        self.save_as_action.setShortcut("Ctrl+Shift+S")
+        self.save_as_action.triggered.connect(
             self.save_as_netcdf
         )
 
@@ -211,6 +225,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self.save_action
         )
+        file_menu.addAction(
+            self.save_as_action
+        )
         file_menu.addSeparator()
         file_menu.addAction(
             self.exit_action
@@ -250,6 +267,9 @@ class MainWindow(QMainWindow):
         tool_bar.addAction(
             self.save_action
         )
+        tool_bar.addAction(
+            self.save_as_action
+        )
         tool_bar.addSeparator()
         tool_bar.addAction(
             self.run_optimisation_action
@@ -272,6 +292,22 @@ class MainWindow(QMainWindow):
 
         self.central_panel.create_empty_network_requested.connect(
             self.on_create_empty_network
+        )
+
+        self.central_panel.new_network_requested.connect(
+            self.on_create_empty_network
+        )
+        self.central_panel.open_network_requested.connect(
+            self.on_open_netcdf_network
+        )
+        self.central_panel.save_network_requested.connect(
+            self.save_network
+        )
+        self.central_panel.save_network_as_requested.connect(
+            self.save_as_netcdf
+        )
+        self.central_panel.network_modified.connect(
+            self.on_network_builder_modified
         )
 
         self.central_panel.run_optimisation_requested.connect(
@@ -578,8 +614,9 @@ class MainWindow(QMainWindow):
 
             self._refresh_research_modules()
 
-            self.central_panel.set_network(
-                None
+            self.central_panel.set_network_context(
+                network=None,
+                locations=None,
             )
 
             self._rebuild_navigation_tree()
@@ -596,8 +633,13 @@ class MainWindow(QMainWindow):
 
         self._refresh_research_modules()
 
-        self.central_panel.set_network(
-            session.network
+        self.central_panel.set_network_context(
+            network=session.network,
+            locations=session.locations,
+        )
+        self.central_panel.set_network_builder_project_state(
+            name=session.name,
+            is_modified=session.is_modified,
         )
 
         self._rebuild_navigation_tree()
@@ -614,15 +656,16 @@ class MainWindow(QMainWindow):
             f"{len(session.network.links)} links"
         )
 
-        if session.source_path is not None:
-            self.setWindowTitle(
-                "pypsa-gui - "
-                f"{session.source_path.name}"
-            )
-        else:
-            self.setWindowTitle(
-                f"pypsa-gui - {session.name}"
-            )
+        modified_suffix = (
+            "*"
+            if session.is_modified
+            else ""
+        )
+
+        self.setWindowTitle(
+            "pypsa-gui - "
+            f"{session.name}{modified_suffix}"
+        )
 
         self._refresh_loaded_networks_dock()
 
@@ -665,7 +708,12 @@ class MainWindow(QMainWindow):
         active_session = self.active_session()
 
         for session in self.network_store.list_sessions():
-            label = session.name
+            modified_suffix = (
+                "*"
+                if session.is_modified
+                else ""
+            )
+            label = f"{session.name}{modified_suffix}"
 
             if session is active_session:
                 label = f"● {label}"
@@ -843,6 +891,60 @@ class MainWindow(QMainWindow):
                 f"{exc}",
             )
 
+    def save_network(self) -> None:
+        session = self.active_session()
+
+        if session is None:
+            QMessageBox.information(
+                self,
+                "No Network Loaded",
+                "There is no network loaded to save.",
+            )
+            return
+
+        if (
+            session.source_path is None
+            or session.source_path.suffix != ".nc"
+        ):
+            self.save_as_netcdf()
+            return
+
+        try:
+            save_network_to_netcdf(
+                session.network,
+                session.source_path,
+            )
+
+            session.is_modified = False
+
+            self.central_panel.set_network_builder_project_state(
+                name=session.name,
+                is_modified=False,
+            )
+            self._refresh_loaded_networks_dock()
+
+            self.setWindowTitle(
+                f"pypsa-gui - {session.name}"
+            )
+
+            self.log(
+                "Network saved to: "
+                f"{session.source_path}"
+            )
+
+        except Exception as exc:
+            self.log(
+                f"Error saving network: {exc}"
+            )
+
+            QMessageBox.critical(
+                self,
+                "Save Failed",
+                "Could not save network:"
+                "\n\n"
+                f"{exc}",
+            )
+
     def save_as_netcdf(self) -> None:
         session = self.active_session()
 
@@ -897,9 +999,13 @@ class MainWindow(QMainWindow):
             ).stem
             session.is_modified = False
 
+            self.central_panel.set_network_builder_project_state(
+                name=session.name,
+                is_modified=False,
+            )
+
             self.setWindowTitle(
-                "pypsa-gui - "
-                f"{Path(file_path).name}"
+                f"pypsa-gui - {session.name}"
             )
 
             self._refresh_loaded_networks_dock()
@@ -919,6 +1025,24 @@ class MainWindow(QMainWindow):
                 "\n\n"
                 f"{exc}",
             )
+
+    def on_network_builder_modified(self) -> None:
+        session = self.active_session()
+
+        if session is None:
+            return
+
+        session.is_modified = True
+
+        self.central_panel.set_network_builder_project_state(
+            name=session.name,
+            is_modified=True,
+        )
+        self._refresh_loaded_networks_dock()
+
+        self.setWindowTitle(
+            f"pypsa-gui - {session.name}*"
+        )
 
     # ------------------------------------------------------------------
     # Optimisation
@@ -1168,8 +1292,49 @@ class MainWindow(QMainWindow):
         return f"{base_name} {index}"
 
     def on_create_empty_network(self) -> None:
+        suggested_name = self._next_empty_network_name()
+
+        network_name, accepted = QInputDialog.getText(
+            self,
+            "New Network",
+            "Network name:",
+            text=suggested_name,
+        )
+
+        if not accepted:
+            self.log(
+                "New network creation cancelled."
+            )
+            return
+
+        network_name = network_name.strip()
+
+        if not network_name:
+            QMessageBox.warning(
+                self,
+                "Invalid Network Name",
+                "The network name cannot be empty.",
+            )
+            return
+
+        existing_names = {
+            session.name
+            for session in self.network_store.list_sessions()
+        }
+
+        if network_name in existing_names:
+            QMessageBox.warning(
+                self,
+                "Network Name Already Used",
+                (
+                    f'A loaded network named "{network_name}" '
+                    "already exists."
+                ),
+            )
+            return
+
         self.log(
-            "Creating empty PyPSA network."
+            f'Creating empty PyPSA network "{network_name}".'
         )
 
         try:
@@ -1190,15 +1355,30 @@ class MainWindow(QMainWindow):
                         "research_modules",
                     },
                 ),
-                name=self._next_empty_network_name(),
+                name=network_name,
             )
+
+            session = self.active_session()
+
+            if session is not None:
+                session.is_modified = True
+
+                self.central_panel.set_network_builder_project_state(
+                    name=session.name,
+                    is_modified=True,
+                )
+                self._refresh_loaded_networks_dock()
+
+                self.setWindowTitle(
+                    f"pypsa-gui - {session.name}*"
+                )
 
             self.central_panel.show_page(
                 "Network Builder"
             )
 
             self.log(
-                "Empty network created."
+                f'Empty network "{network_name}" created.'
             )
 
         except Exception as exc:

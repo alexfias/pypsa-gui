@@ -62,6 +62,12 @@ class TopologyToolMode(str, Enum):
 class NetworkBuilderPage(QWidget):
     create_empty_network_requested = Signal()
 
+    new_network_requested = Signal()
+    open_network_requested = Signal()
+    save_network_requested = Signal()
+    save_network_as_requested = Signal()
+    network_modified = Signal()
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -70,6 +76,8 @@ class NetworkBuilderPage(QWidget):
 
         self.network: Any | None = None
         self.locations: dict[str, NetworkLocation] = {}
+        self.project_name = "Untitled Network"
+        self.project_is_modified = False
         self.topology_tool_mode = TopologyToolMode.SELECT
         self.pending_connection_location: str | None = None
 
@@ -122,6 +130,32 @@ class NetworkBuilderPage(QWidget):
 
         self.show_editor_view()
         self.refresh_map()
+
+    def set_project_state(
+        self,
+        name: str,
+        is_modified: bool,
+    ) -> None:
+        self.project_name = name or "Untitled Network"
+        self.project_is_modified = is_modified
+        self._refresh_project_title()
+
+    def _refresh_project_title(self) -> None:
+        if not hasattr(
+            self,
+            "network_title_label",
+        ):
+            return
+
+        suffix = "*" if self.project_is_modified else ""
+        self.network_title_label.setText(
+            f"{self.project_name}{suffix}"
+        )
+
+    def _mark_network_modified(self) -> None:
+        self.project_is_modified = True
+        self._refresh_project_title()
+        self.network_modified.emit()
 
     def show_welcome_view(self) -> None:
         self.page_stack.setCurrentWidget(
@@ -312,8 +346,10 @@ class NetworkBuilderPage(QWidget):
 
         header_layout = QHBoxLayout()
 
-        title = QLabel("Network Builder")
-        title.setStyleSheet(
+        self.network_title_label = QLabel(
+            "Untitled Network"
+        )
+        self.network_title_label.setStyleSheet(
             """
             QLabel {
                 font-size: 22px;
@@ -333,13 +369,22 @@ class NetworkBuilderPage(QWidget):
             """
         )
 
-        header_layout.addWidget(title)
+        header_layout.addWidget(
+            self.network_title_label
+        )
         header_layout.addWidget(
             self.network_summary_label
         )
         header_layout.addStretch()
 
         root_layout.addLayout(header_layout)
+
+        self.project_toolbar = self._create_project_toolbar(
+            page
+        )
+        root_layout.addWidget(
+            self.project_toolbar
+        )
 
         self.topology_toolbar = (
             self._create_topology_toolbar(page)
@@ -417,8 +462,91 @@ class NetworkBuilderPage(QWidget):
         self._set_topology_tool_mode(
             TopologyToolMode.SELECT
         )
+        self._refresh_project_title()
 
         return page
+
+    # ------------------------------------------------------------------
+    # Project toolbar
+    # ------------------------------------------------------------------
+
+    def _create_project_toolbar(
+        self,
+        parent: QWidget,
+    ) -> QToolBar:
+        toolbar = QToolBar(
+            "Project tools",
+            parent,
+        )
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+
+        new_action = QAction(
+            "＋  New",
+            toolbar,
+        )
+        new_action.setToolTip(
+            "Create a new network."
+        )
+        new_action.setShortcut("Ctrl+N")
+        new_action.triggered.connect(
+            self.new_network_requested.emit
+        )
+        toolbar.addAction(
+            new_action
+        )
+
+        open_action = QAction(
+            "▣  Open",
+            toolbar,
+        )
+        open_action.setToolTip(
+            "Open an existing PyPSA network."
+        )
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(
+            self.open_network_requested.emit
+        )
+        toolbar.addAction(
+            open_action
+        )
+
+        toolbar.addSeparator()
+
+        save_action = QAction(
+            "💾  Save",
+            toolbar,
+        )
+        save_action.setToolTip(
+            "Save the current network."
+        )
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(
+            self.save_network_requested.emit
+        )
+        toolbar.addAction(
+            save_action
+        )
+
+        save_as_action = QAction(
+            "💾  Save As",
+            toolbar,
+        )
+        save_as_action.setToolTip(
+            "Save the current network under a new name."
+        )
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(
+            self.save_network_as_requested.emit
+        )
+        toolbar.addAction(
+            save_as_action
+        )
+
+        return toolbar
 
     # ------------------------------------------------------------------
     # Topology toolbar
@@ -977,6 +1105,7 @@ class NetworkBuilderPage(QWidget):
             )
             return
 
+        self._mark_network_modified()
         self.refresh_map()
         self.tool_status_label.setText(
             f'Added line "{values["name"]}" from '
@@ -1035,6 +1164,7 @@ class NetworkBuilderPage(QWidget):
             )
             return
 
+        self._mark_network_modified()
         self.refresh_map()
         self.tool_status_label.setText(
             f'Added link "{values["name"]}" from '
@@ -1186,6 +1316,7 @@ class NetworkBuilderPage(QWidget):
             )
             return
 
+        self._mark_network_modified()
         self.refresh_map()
         self.tool_status_label.setText(
             f'Added location "{location_name}" with default bus '
