@@ -876,8 +876,9 @@ class MainWindow(QMainWindow):
 
             recorder = WorkflowRecorder(workflow)
 
-            recorder.record_create_empty_network(
-                name=network_name,
+            recorder.record_load_network(
+                source_path=file_path,
+                network_name=Path(file_path).stem,
             )
 
             self._add_network_session(
