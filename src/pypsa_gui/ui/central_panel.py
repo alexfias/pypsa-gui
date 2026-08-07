@@ -270,6 +270,10 @@ class CentralPanel(QWidget):
 
         self._module_pages.clear()
 
+    def has_module_pages(self) -> bool:
+        """Return whether research-module pages currently exist."""
+        return bool(self._module_pages)
+
     def add_module_page(
         self,
         name: str,

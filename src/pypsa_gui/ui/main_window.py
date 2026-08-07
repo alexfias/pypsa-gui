@@ -654,10 +654,23 @@ class MainWindow(QMainWindow):
 
             return
 
-        # Research-module widgets must be recreated only when the page
-        # structure changed. Existing module pages receive the new network
-        # through CentralPanel.set_network_context() below.
-        if pages_rebuilt:
+        # Research-module widgets must be recreated when the page
+        # structure changed or when research modules are enabled but
+        # their pages are currently missing. The latter occurs when the
+        # first network is created from the initial no-network state:
+        # enabled_sections can remain unchanged even though module pages
+        # were previously cleared.
+        research_modules_enabled = (
+            "research_modules"
+            in required_sections
+        )
+
+        module_pages_missing = (
+            research_modules_enabled
+            and not self.central_panel.has_module_pages()
+        )
+
+        if pages_rebuilt or module_pages_missing:
             self._refresh_research_modules()
         else:
             for module in self.modules:
