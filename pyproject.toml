@@ -42,6 +42,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.package-data]
 pypsa_gui = [
   "data/teaching/*.nc",
+  "data/time_series/manifest.json",
+  "data/time_series/profiles/*.csv",
+  "data/technologies/manifest.json",
 ]
 
 [tool.setuptools.packages.find]

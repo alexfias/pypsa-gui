@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from pypsa_gui.models.technology_preset import TechnologyPreset
 from pypsa_gui.models.time_series_profile import TimeSeriesProfile
 
 from PySide6.QtWidgets import (
@@ -161,6 +162,7 @@ class GeneratorCreationDialog(QDialog):
         bus_names: list[str],
         suggested_name: str,
         available_profiles: list[TimeSeriesProfile],
+        available_presets: list[TechnologyPreset],
         suggested_carrier: str = "solar",
         parent: QWidget | None = None,
     ) -> None:
@@ -171,6 +173,29 @@ class GeneratorCreationDialog(QDialog):
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
+
+        self._available_profiles = list(
+            available_profiles
+        )
+        self._available_presets = list(
+            available_presets
+        )
+        self._active_profile_carrier: str | None = None
+
+        self.technology_combo = QComboBox()
+        self.technology_combo.addItem(
+            "Custom / manual",
+            None,
+        )
+
+        for preset in self._available_presets:
+            self.technology_combo.addItem(
+                (
+                    f"{preset.category} — "
+                    f"{preset.name}"
+                ),
+                preset.id,
+            )
 
         self.name_edit = QLineEdit(
             suggested_name
@@ -293,6 +318,10 @@ class GeneratorCreationDialog(QDialog):
         self.target_capacity_factor_spin.setValue(0.35)
 
         form.addRow(
+            "Technology preset",
+            self.technology_combo,
+        )
+        form.addRow(
             "Generator name",
             self.name_edit,
         )
@@ -347,17 +376,18 @@ class GeneratorCreationDialog(QDialog):
 
         layout.addLayout(form)
 
-        self._available_profiles = list(
-            available_profiles
+        self.technology_combo.currentIndexChanged.connect(
+            self._apply_selected_technology_preset
         )
-
         self.profile_mode_combo.currentIndexChanged.connect(
             self._update_profile_controls
         )
         self.carrier_edit.textChanged.connect(
             self._refresh_profile_choices
         )
-        self._refresh_profile_choices()
+        self._select_initial_technology(
+            suggested_carrier
+        )
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -371,15 +401,138 @@ class GeneratorCreationDialog(QDialog):
         )
         layout.addWidget(buttons)
 
+    def _select_initial_technology(
+        self,
+        suggested_carrier: str,
+    ) -> None:
+        target = suggested_carrier.strip().lower()
+
+        for index in range(
+            1,
+            self.technology_combo.count(),
+        ):
+            preset_id = self.technology_combo.itemData(
+                index
+            )
+            preset = self._preset_by_id(
+                preset_id
+            )
+
+            if (
+                preset is not None
+                and preset.carrier.strip().lower()
+                == target
+            ):
+                self.technology_combo.setCurrentIndex(
+                    index
+                )
+                self._apply_selected_technology_preset()
+                return
+
+        self._active_profile_carrier = None
+        self._refresh_profile_choices()
+
+    def _preset_by_id(
+        self,
+        preset_id: str | None,
+    ) -> TechnologyPreset | None:
+        if preset_id is None:
+            return None
+
+        for preset in self._available_presets:
+            if preset.id == preset_id:
+                return preset
+
+        return None
+
+    def _apply_selected_technology_preset(
+        self,
+    ) -> None:
+        preset = self._preset_by_id(
+            self.technology_combo.currentData()
+        )
+
+        if preset is None:
+            self._active_profile_carrier = None
+            self._refresh_profile_choices()
+            return
+
+        self.carrier_edit.setText(
+            preset.carrier
+        )
+        self.capital_cost_spin.setValue(
+            preset.capital_cost
+        )
+        self.marginal_cost_spin.setValue(
+            preset.marginal_cost
+        )
+        self.efficiency_spin.setValue(
+            preset.efficiency
+        )
+        self.lifetime_spin.setValue(
+            preset.lifetime
+        )
+        self.constant_p_max_pu_spin.setValue(
+            preset.default_p_max_pu
+        )
+
+        extendable_index = (
+            self.extendable_combo.findData(
+                preset.p_nom_extendable
+            )
+        )
+
+        if extendable_index >= 0:
+            self.extendable_combo.setCurrentIndex(
+                extendable_index
+            )
+
+        self._active_profile_carrier = (
+            preset.profile_carrier
+        )
+
+        if preset.is_variable_renewable:
+            existing_index = (
+                self.profile_mode_combo.findData(
+                    GeneratorProfileMode.EXISTING
+                )
+            )
+
+            if existing_index >= 0:
+                self.profile_mode_combo.setCurrentIndex(
+                    existing_index
+                )
+        else:
+            constant_index = (
+                self.profile_mode_combo.findData(
+                    GeneratorProfileMode.CONSTANT
+                )
+            )
+
+            if constant_index >= 0:
+                self.profile_mode_combo.setCurrentIndex(
+                    constant_index
+                )
+
+        self._refresh_profile_choices()
+
     def _refresh_profile_choices(self) -> None:
         selected_profile_id = (
             self.profile_combo.currentData()
         )
-        carrier = (
-            self.carrier_edit.text()
-            .strip()
-            .lower()
-        )
+
+        if self._active_profile_carrier:
+            carrier = (
+                self._active_profile_carrier
+                .strip()
+                .lower()
+            )
+        else:
+            carrier = (
+                self.carrier_edit.text()
+                .strip()
+                .lower()
+            )
 
         matching_profiles = [
             profile

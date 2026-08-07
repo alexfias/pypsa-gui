@@ -1,0 +1,236 @@
+[
+  {
+    "id": "solar_pv",
+    "name": "Solar PV",
+    "category": "Renewables",
+    "component_type": "Generator",
+    "carrier": "solar",
+    "profile_carrier": "solar",
+    "defaults": {
+      "capital_cost": 45000.0,
+      "marginal_cost": 0.0,
+      "efficiency": 1.0,
+      "lifetime": 30.0,
+      "p_nom_extendable": true,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic utility-scale solar PV.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "wind_onshore",
+    "name": "Onshore Wind",
+    "category": "Renewables",
+    "component_type": "Generator",
+    "carrier": "onwind",
+    "profile_carrier": "onwind",
+    "defaults": {
+      "capital_cost": 90000.0,
+      "marginal_cost": 0.0,
+      "efficiency": 1.0,
+      "lifetime": 30.0,
+      "p_nom_extendable": true,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic onshore wind.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "wind_offshore",
+    "name": "Offshore Wind",
+    "category": "Renewables",
+    "component_type": "Generator",
+    "carrier": "offwind",
+    "profile_carrier": "offwind",
+    "defaults": {
+      "capital_cost": 180000.0,
+      "marginal_cost": 0.0,
+      "efficiency": 1.0,
+      "lifetime": 30.0,
+      "p_nom_extendable": true,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic offshore wind.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "gas_ocgt",
+    "name": "Gas OCGT",
+    "category": "Thermal",
+    "component_type": "Generator",
+    "carrier": "gas",
+    "profile_carrier": null,
+    "defaults": {
+      "capital_cost": 50000.0,
+      "marginal_cost": 90.0,
+      "efficiency": 0.39,
+      "lifetime": 30.0,
+      "p_nom_extendable": true,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic open-cycle gas turbine.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "gas_ccgt",
+    "name": "Gas CCGT",
+    "category": "Thermal",
+    "component_type": "Generator",
+    "carrier": "gas",
+    "profile_carrier": null,
+    "defaults": {
+      "capital_cost": 90000.0,
+      "marginal_cost": 70.0,
+      "efficiency": 0.58,
+      "lifetime": 30.0,
+      "p_nom_extendable": true,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic combined-cycle gas turbine.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "coal",
+    "name": "Coal",
+    "category": "Thermal",
+    "component_type": "Generator",
+    "carrier": "coal",
+    "profile_carrier": null,
+    "defaults": {
+      "capital_cost": 160000.0,
+      "marginal_cost": 55.0,
+      "efficiency": 0.4,
+      "lifetime": 40.0,
+      "p_nom_extendable": false,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic coal-fired generator.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "nuclear",
+    "name": "Nuclear",
+    "category": "Thermal",
+    "component_type": "Generator",
+    "carrier": "nuclear",
+    "profile_carrier": null,
+    "defaults": {
+      "capital_cost": 450000.0,
+      "marginal_cost": 12.0,
+      "efficiency": 0.33,
+      "lifetime": 50.0,
+      "p_nom_extendable": false,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic nuclear generator.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "hydro_ror",
+    "name": "Run-of-River Hydro",
+    "category": "Renewables",
+    "component_type": "Generator",
+    "carrier": "ror",
+    "profile_carrier": "ror",
+    "defaults": {
+      "capital_cost": 220000.0,
+      "marginal_cost": 0.0,
+      "efficiency": 1.0,
+      "lifetime": 60.0,
+      "p_nom_extendable": false,
+      "p_max_pu": 1.0
+    },
+    "description": "Generic run-of-river hydro.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  },
+  {
+    "id": "generic_dispatchable",
+    "name": "Generic Dispatchable Generator",
+    "category": "Other",
+    "component_type": "Generator",
+    "carrier": "generator",
+    "profile_carrier": null,
+    "defaults": {
+      "capital_cost": 0.0,
+      "marginal_cost": 0.0,
+      "efficiency": 1.0,
+      "lifetime": 25.0,
+      "p_nom_extendable": false,
+      "p_max_pu": 1.0
+    },
+    "description": "Neutral generic generator preset.",
+    "source": {
+      "provider": "PyPSA Forge illustrative defaults",
+      "year": 2030,
+      "reference": null
+    },
+    "metadata": {
+      "status": "illustrative",
+      "cost_basis": "annualized capital cost, model currency/MW/year"
+    }
+  }
+]

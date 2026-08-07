@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from pypsa_gui.models.network_location import NetworkLocation
+from pypsa_gui.services.technology_library import TechnologyLibrary
 from pypsa_gui.services.time_series_library import TimeSeriesLibrary
 from pypsa_gui.ui.pages.network_builder.component_dialogs import (
     GeneratorCreationDialog,
@@ -49,7 +50,20 @@ class LocationEditor(QWidget):
         self.network: Any | None = None
         self.location: NetworkLocation | None = None
         self.time_series_library = TimeSeriesLibrary()
+        self.technology_library = TechnologyLibrary()
+
         self.profile_loading_error: str | None = None
+        self.technology_loading_error: str | None = None
+
+        try:
+            self.time_series_library.load_packaged_profiles()
+        except Exception as exc:
+            self.profile_loading_error = str(exc)
+
+        try:
+            self.technology_library.load_packaged_presets()
+        except Exception as exc:
+            self.technology_loading_error = str(exc)
 
         self._build_ui()
         self._set_editor_enabled(False)
@@ -66,13 +80,21 @@ class LocationEditor(QWidget):
         self.network = network
         self.location = location
 
-        self.time_series_library.clear()
-        self.profile_loading_error = None
+        if hasattr(
+            self.time_series_library,
+            "remove_profiles_by_source_type",
+        ):
+            self.time_series_library.remove_profiles_by_source_type(
+                "network"
+            )
+        else:
+            # Fallback for older library versions.
+            self.time_series_library.clear()
 
-        try:
-            self.time_series_library.load_packaged_profiles()
-        except Exception as exc:
-            self.profile_loading_error = str(exc)
+            try:
+                self.time_series_library.load_packaged_profiles()
+            except Exception as exc:
+                self.profile_loading_error = str(exc)
 
         if network is not None:
             self.time_series_library.register_network_profiles(
@@ -549,6 +571,11 @@ class LocationEditor(QWidget):
         available_profiles = (
             self.time_series_library.list_profiles()
         )
+        available_presets = (
+            self.technology_library.list_presets(
+                component_type="Generator"
+            )
+        )
 
         if (
             not available_profiles
@@ -565,6 +592,21 @@ class LocationEditor(QWidget):
                 ),
             )
 
+        if (
+            not available_presets
+            and self.technology_loading_error is not None
+        ):
+            QMessageBox.warning(
+                self,
+                "Technology Presets Could Not Be Loaded",
+                (
+                    "Packaged technology presets could not be loaded. "
+                    "Manual generator creation remains available."
+                    "\n\n"
+                    f"{self.technology_loading_error}"
+                ),
+            )
+
         dialog = GeneratorCreationDialog(
             bus_names=bus_names,
             suggested_name=self._next_component_name(
@@ -572,6 +614,7 @@ class LocationEditor(QWidget):
                 base_name="Generator",
             ),
             available_profiles=available_profiles,
+            available_presets=available_presets,
             suggested_carrier="solar",
             parent=self,
         )
