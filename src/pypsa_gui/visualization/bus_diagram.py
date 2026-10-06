@@ -45,8 +45,10 @@ def short_label(value, width=18, lines=3):
 
 
 def bus_label(network, bus):
-    voltage = network.buses.at[bus, "v_nom"]
-    return f"{short_label(bus, lines=2)}\n{voltage:g} kV"
+    row = network.buses.loc[bus]
+    carrier = str(row.get("carrier", "")).strip()
+    detail = f"{row.v_nom:g} kV" if carrier.lower() in {"ac", "dc", "electricity", "electric"} else (carrier or "Carrier unspecified")
+    return f"{short_label(bus, lines=2)}\n{short_label(detail, lines=1)}"
 
 
 def diagram_canvas_width(network, bus):
