@@ -2,7 +2,9 @@
 from dataclasses import dataclass
 import textwrap
 
-from matplotlib.patches import Circle, Rectangle, Polygon
+from matplotlib.patches import Circle, Rectangle
+from pypsa_gui.visualization.technology_symbols import draw_symbol
+from pypsa_gui.visualization.network_renderer import carrier_color
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ def diagram_canvas_width(network, bus):
     return max(1000, 180 * max(len(branches), len(assets)) + 160)
 
 
-def render_bus_diagram(figure, network, bus, title=None, resize_figure=True):
+def render_bus_diagram(figure, network, bus, title=None, resize_figure=True, symbol_mode="Technology"):
     """Render every connection and return artist->(component,id) pick targets.
 
     Standalone figures grow to fit all columns. Qt callers size their canvas using
@@ -116,15 +118,11 @@ def render_bus_diagram(figure, network, bus, title=None, resize_figure=True):
     for i, item in enumerate(assets):
         x = i * 2.4
         line([x, x], [0, -1.8], item.component, item.name, color="#526675")
-        if item.component == "generators":
-            patch = Circle((x, -2), .3, facecolor="white", edgecolor="#3d876c", linewidth=1.5, zorder=3)
-        elif item.component == "loads":
-            patch = Polygon([(x-.25,-1.8),(x+.25,-1.8),(x,-2.3)], facecolor="white", edgecolor="#ae6856", linewidth=1.5, zorder=3)
-        else:
-            patch = Rectangle((x-.4, -2.3), .8, .6, facecolor="#edf4f7", edgecolor="#526675", zorder=3)
-        ax.add_patch(patch); pick(patch, item.component, item.name)
-        if item.component != "loads":
-            text(x, -2, "G" if item.component == "generators" else ("S" if item.component == "shunt_impedances" else "E"), item.component, item.name, zorder=4)
+        row = getattr(network, item.component).loc[item.name]
+        carrier = row.get("carrier", "")
+        for artist in draw_symbol(ax, x, -2, item.component, carrier,
+                                  mode=symbol_mode, color=carrier_color(network, str(carrier))):
+            pick(artist, item.component, item.name)
         text(x, -2.9, short_label(f"{symbols[item.component]}: {item.name}"), item.component, item.name)
     if not branches and not assets:
         ax.text(width/2-.7, -1.6, "No connected equipment", ha="center", color="#64748b")
