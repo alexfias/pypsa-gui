@@ -1,6 +1,5 @@
 """Local single-line diagrams. Static topology only; no inferred switches."""
 from dataclasses import dataclass
-import math
 import textwrap
 
 from matplotlib.patches import Circle, Rectangle, Polygon
@@ -34,13 +33,36 @@ def connections(network, bus):
     return branches, assets
 
 
+def short_label(value, width=18, lines=3):
+    """Bound each label to its connection column; full IDs remain in pick targets."""
+    wrapped = textwrap.wrap(str(value), width=width, break_long_words=True) or [""]
+    if len(wrapped) > lines:
+        wrapped = wrapped[:lines]
+        wrapped[-1] = wrapped[-1][:max(1, width - 1)] + "…"
+    return "\n".join(wrapped)
+
+
 def bus_label(network, bus):
     voltage = network.buses.at[bus, "v_nom"]
-    return f"{bus}\n{voltage:g} kV"
+    return f"{short_label(bus, lines=2)}\n{voltage:g} kV"
 
 
-def render_bus_diagram(figure, network, bus, page=0, page_size=6, title=None):
-    """Return artist->(component,id) pick targets and number of feeder pages."""
+def diagram_canvas_width(network, bus):
+    """Logical pixels, reserving a readable column for every connection."""
+    if network is None or bus not in network.buses.index:
+        return 1000
+    branches, assets = connections(network, bus)
+    return max(1000, 180 * max(len(branches), len(assets)) + 160)
+
+
+def render_bus_diagram(figure, network, bus, title=None, resize_figure=True):
+    """Render every connection and return artist->(component,id) pick targets.
+
+    Standalone figures grow to fit all columns. Qt callers size their canvas using
+    diagram_canvas_width and pass resize_figure=False to preserve Qt's DPI handling.
+    """
+    if resize_figure:
+        figure.set_size_inches(diagram_canvas_width(network, bus) / 100, 7)
     figure.clear()
     ax = figure.add_subplot(111)
     ax.set_axis_off()
@@ -49,12 +71,8 @@ def render_bus_diagram(figure, network, bus, page=0, page_size=6, title=None):
     targets = {}
     if network is None or bus not in network.buses.index:
         ax.text(.5, .5, "Select a bus to inspect its connections.", ha="center", transform=ax.transAxes)
-        return targets, 1
+        return targets
     branches, assets = connections(network, bus)
-    pages = max(1, math.ceil(max(len(branches), len(assets)) / page_size))
-    page = min(max(page, 0), pages - 1)
-    branches = branches[page * page_size:(page + 1) * page_size]
-    assets = assets[page * page_size:(page + 1) * page_size]
     count = max(len(branches), len(assets), 1)
     width = max(3, (count - 1) * 2.4 + 1.4)
 
@@ -72,8 +90,7 @@ def render_bus_diagram(figure, network, bus, page=0, page_size=6, title=None):
         return pick(artist, component, name)
 
     line([-.7, width - .7], [0, 0], "buses", bus, color="#174e73", linewidth=5)
-    text(width / 2 - .7, .6, bus_label(network, bus), "buses", bus,
-         color="#174e73", fontweight="bold")
+    # Selected bus name/voltage live in the title, outside all connection labels.
     palette = {"lines": "#526675", "links": "#5678a6", "transformers": "#ad6c38"}
     for i, item in enumerate(branches):
         x = i * 2.4
@@ -93,7 +110,8 @@ def render_bus_diagram(figure, network, bus, page=0, page_size=6, title=None):
         label = f"{item.component[:-1].replace('_', ' ').title()} {item.name}"
         if item.component == "links":
             label += f" ({item.port})"
-        text(x+.6, 1.0, '\n'.join(textwrap.wrap(label, 15)), item.component, item.name, color=color)
+        text(x, 1.0, short_label(label), item.component, item.name, color=color,
+             bbox=dict(facecolor='white', edgecolor='none', pad=2), zorder=5)
     symbols = {"generators": "G", "loads": "Load", "storage_units": "Storage", "stores": "Store", "shunt_impedances": "Shunt"}
     for i, item in enumerate(assets):
         x = i * 2.4
@@ -107,11 +125,11 @@ def render_bus_diagram(figure, network, bus, page=0, page_size=6, title=None):
         ax.add_patch(patch); pick(patch, item.component, item.name)
         if item.component != "loads":
             text(x, -2, "G" if item.component == "generators" else ("S" if item.component == "shunt_impedances" else "E"), item.component, item.name, zorder=4)
-        text(x, -2.9, '\n'.join(textwrap.wrap(f"{symbols[item.component]}: {item.name}", 18)), item.component, item.name)
+        text(x, -2.9, short_label(f"{symbols[item.component]}: {item.name}"), item.component, item.name)
     if not branches and not assets:
         ax.text(width/2-.7, -1.6, "No connected equipment", ha="center", color="#64748b")
     ax.set_xlim(-1.0, width)
     ax.set_ylim(-3.6, 4.4)
-    ax.set_title(title or f"Bus {bus} · local single-line diagram", loc="left", fontsize=12, pad=15)
+    ax.set_title(short_label(title or f"Bus {bus} · {network.buses.at[bus, 'v_nom']:g} kV · local single-line diagram", width=70, lines=2), loc="left", fontsize=12, pad=15)
     figure.subplots_adjust(left=.04, right=.98, top=.9, bottom=.06)
-    return targets, pages
+    return targets

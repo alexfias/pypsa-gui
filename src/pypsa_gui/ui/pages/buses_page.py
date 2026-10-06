@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QAbstractItemView, QDialog, QScrollArea, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QSplitter, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from pypsa_gui.ui.pages.component_page import ComponentPage
 from pypsa_gui.ui.widgets.figure_panel import FigurePanel
-from pypsa_gui.visualization.bus_diagram import render_bus_diagram
+from pypsa_gui.visualization.bus_diagram import render_bus_diagram, diagram_canvas_width
 
 
 class BusesPage(ComponentPage):
@@ -24,7 +24,12 @@ class BusesPage(ComponentPage):
                        self.clear_bus_filter_button, self.table):
             widget.setParent(table_widget)
         self.tabs = QTabWidget()
+        self.window_button = QPushButton("Open diagram in separate window")
+        self.window_button.clicked.connect(self._open_window)
+        outer.addWidget(self.window_button)
+        self._diagram_window = None
         diagram = QWidget()
+        self.diagram_widget = diagram
         diagram_layout = QVBoxLayout(diagram)
         split = QSplitter(Qt.Horizontal)
         left = QWidget(); left_layout = QVBoxLayout(left)
@@ -34,14 +39,15 @@ class BusesPage(ComponentPage):
         centre = QWidget(); centre_layout = QVBoxLayout(centre)
         self.panel = FigurePanel("Local single-line diagram", minimum_canvas_height=380)
         self.panel.legend_checkbox.hide()
+        # Preserve readable text at narrow dock widths; scroll instead of squeezing.
+        self.panel.layout().removeWidget(self.panel.canvas)
+        self.diagram_scroll = QScrollArea()
+        self.diagram_scroll.setWidgetResizable(True)
+        self.panel.canvas.setMinimumSize(1000, 700)
+        self.diagram_scroll.setWidget(self.panel.canvas)
+        self.panel.layout().addWidget(self.diagram_scroll, 1)
         centre_layout.addWidget(self.panel, 1)
-        controls = QHBoxLayout()
-        self.previous = QPushButton("Previous feeders")
-        self.next = QPushButton("Next feeders")
-        self.page_label = QLabel()
-        controls.addWidget(self.previous); controls.addWidget(self.page_label); controls.addWidget(self.next)
-        centre_layout.addLayout(controls)
-        self.hint = QLabel("Click a neighbouring bus to navigate; click equipment for parameters.\nStatic topology · one connection away · export shows the current feeder page.")
+        self.hint = QLabel("Click a neighbouring bus to navigate; click equipment for parameters.\nScroll for the full diagram; hover for full names. Export includes every connection, including offscreen content.")
         self.hint.setWordWrap(True); centre_layout.addWidget(self.hint)
         right = QWidget(); right_layout = QVBoxLayout(right)
         self.detail_title = QLabel("Component details"); self.detail_title.setWordWrap(True)
@@ -56,14 +62,12 @@ class BusesPage(ComponentPage):
         self.tabs.addTab(diagram, "Diagram"); self.tabs.addTab(table_widget, "Table")
         outer.addWidget(self.tabs)
         self.selected_bus = None
-        self.feeder_page = 0
         self.targets = {}
         self.bus_search.textChanged.connect(self._filter_list)
         self.bus_list.currentItemChanged.connect(self._bus_changed)
-        self.previous.clicked.connect(lambda: self._change_page(-1))
-        self.next.clicked.connect(lambda: self._change_page(1))
         self.panel.title_edit.editingFinished.connect(self._draw)
         self.panel.canvas.mpl_connect("pick_event", self._picked)
+        self.panel.canvas.mpl_connect("motion_notify_event", self._hover)
         self.tabs.currentChanged.connect(self._tab_changed)
         self.table.selectionModel().currentChanged.connect(self._table_selected)
         self._draw()
@@ -111,24 +115,21 @@ class BusesPage(ComponentPage):
         if current is None:
             return
         self.selected_bus = current.data(Qt.UserRole)
-        self.feeder_page = 0
-        self.panel.title_edit.setText(f"Bus {self.selected_bus} · local single-line diagram")
+        self.panel.title_edit.setText(f"Bus {self.selected_bus} · {self.network.buses.at[self.selected_bus, 'v_nom']:g} kV · local single-line diagram")
         self._show_details("buses", self.selected_bus)
         self._draw()
 
     def _draw(self):
-        self.targets, pages = render_bus_diagram(
-            self.panel.figure, self.network, self.selected_bus, self.feeder_page,
-            title=self.panel.current_title(),
+        width = diagram_canvas_width(self.network, self.selected_bus)
+        self.panel.canvas.setMinimumWidth(width)
+        self.panel.canvas.resize(max(width, self.diagram_scroll.viewport().width()),
+                                 max(700, self.diagram_scroll.viewport().height()))
+        self.targets = render_bus_diagram(
+            self.panel.figure, self.network, self.selected_bus,
+            title=self.panel.current_title(), resize_figure=False,
         )
-        self.feeder_page = min(self.feeder_page, pages - 1)
-        self.page_label.setText(f"Page {self.feeder_page + 1} / {pages}")
-        self.previous.setEnabled(self.feeder_page > 0)
-        self.next.setEnabled(self.feeder_page + 1 < pages)
         self.panel.toolbar.update(); self.panel.canvas.draw_idle()
 
-    def _change_page(self, delta):
-        self.feeder_page = max(0, self.feeder_page + delta); self._draw()
 
     def _picked(self, event):
         if self.panel.toolbar.mode or event.artist not in self.targets:
@@ -166,4 +167,38 @@ class BusesPage(ComponentPage):
     def filter_by_bus(self, bus_name):
         super().filter_by_bus(bus_name)
         self.select_bus(bus_name)
+        self.tabs.setCurrentIndex(0)
+
+    def _hover(self, event):
+        for artist, (component, name) in reversed(list(self.targets.items())):
+            if artist.contains(event)[0]:
+                self.panel.canvas.setToolTip(f"{component.replace('_', ' ').title()}: {name}")
+                return
+        self.panel.canvas.setToolTip("")
+
+    def _open_window(self):
+        if self._diagram_window is not None:
+            self._diagram_window.raise_()
+            self._diagram_window.activateWindow()
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Bus diagram explorer")
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        self._diagram_window = dialog
+        self.tabs.removeTab(0)
+        self._window_placeholder = QLabel("Diagram is open in a separate window. Close that window to return it here.")
+        self._window_placeholder.setWordWrap(True)
+        self.tabs.insertTab(0, self._window_placeholder, "Diagram")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(self.diagram_widget)
+        self.diagram_widget.show()
+        dialog.finished.connect(self._restore_diagram)
+        dialog.showMaximized()
+
+    def _restore_diagram(self, result=0):
+        self.tabs.removeTab(0)
+        self.tabs.insertTab(0, self.diagram_widget, "Diagram")
+        self._window_placeholder.deleteLater()
+        self._diagram_window = None
         self.tabs.setCurrentIndex(0)
