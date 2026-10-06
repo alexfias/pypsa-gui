@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
 
 
 class FigurePanel(QWidget):
@@ -29,6 +31,7 @@ class FigurePanel(QWidget):
         self.figure = Figure(figsize=(6, 4))
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(minimum_canvas_height)
+        self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
         self.title_edit = QLineEdit(default_title)
         self.legend_checkbox = QCheckBox("Show legend")
@@ -43,6 +46,7 @@ class FigurePanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addLayout(controls_layout)
+        layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
 
         self.save_button.clicked.connect(self.save_figure)
@@ -54,7 +58,7 @@ class FigurePanel(QWidget):
         return self.legend_checkbox.isChecked()
 
     def save_figure(self) -> None:
-        file_path, _ = QFileDialog.getSaveFileName(
+        file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Save Figure",
             str(Path.home() / "figure.png"),
@@ -64,4 +68,10 @@ class FigurePanel(QWidget):
         if not file_path:
             return
 
-        self.figure.savefig(file_path, bbox_inches="tight")
+        if not Path(file_path).suffix:
+            extension = {"SVG Files (*.svg)": ".svg", "PDF Files (*.pdf)": ".pdf"}.get(selected_filter, ".png")
+            file_path += extension
+        try:
+            self.figure.savefig(file_path, bbox_inches="tight", dpi=200)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Could not save figure", str(exc))

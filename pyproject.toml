@@ -19,6 +19,7 @@ dependencies = [
     "pandas",
     "PySide6",
     "matplotlib",
+    "networkx>=2.8",
     "reportlab",
 ]
 
