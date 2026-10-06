@@ -199,3 +199,7 @@ The project is still in an experimental phase and the structure will continue to
 ## License
 
 MIT License
+
+## Network visualization update
+
+See [step 1: network renderer](docs/visualization-step-1.md) for layouts, controls, installation and validation notes.
