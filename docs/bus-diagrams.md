@@ -73,3 +73,37 @@ The vector symbol sheet is in `docs/images/technology-symbols.svg` with a PNG pr
 This update changes `buses_page.py`, `bus_diagram.py`, this guide and the screenshot;
 it adds `visualization/technology_symbols.py` and `tests/test_technology_symbols.py`.
 All 30 tests pass, including carrier classification, vector export and mode switching.
+
+## Group buses at one location
+
+The view dropdown now offers **Bus**, **Location**, and **Manual group**.
+
+- Location groups buses whose non-empty `buses.location` value exactly matches
+  the selected bus. It never groups by coordinates or by blank location values.
+- Choose buses opens a searchable checklist for manual grouping. The selected
+  bus is always included. Manual selection is view state only, is not saved to
+  the network, and is cleared when a different network is loaded.
+- Each bus retains its own busbar, equipment and carrier/voltage label.
+- Components joining two or more displayed buses are shown once in dedicated
+  lanes with named terminals. Crossings without dots are not junctions.
+- External connections remain visible. A multi-terminal link with an external
+  terminal also labels that remote bus. Click buses to navigate and devices for
+  parameters, as in the single-bus view.
+- Electricity buses labelled AC/DC/electricity/electric show voltage. Other buses
+  show carrier names. Unknown/blank carriers are labelled unspecified.
+- Grouped diagrams scroll vertically and horizontally as needed. Separate-window,
+  symbol-mode selection and complete-figure export remain available.
+
+This is visual grouping only; bus indices, links and model equations are unchanged.
+
+### Files added/changed in the location update
+
+- `src/pypsa_gui/ui/pages/buses_page.py`
+- `src/pypsa_gui/visualization/bus_diagram.py`
+- `src/pypsa_gui/visualization/location_diagram.py` (new)
+- `tests/test_location_diagram.py` (new)
+- `docs/bus-diagrams.md`
+- `docs/images/location-diagram.png` (example)
+
+All 33 tests pass, including grouping, blank locations, internal link deduplication,
+external ports, exports and switching views. No new dependencies are needed.

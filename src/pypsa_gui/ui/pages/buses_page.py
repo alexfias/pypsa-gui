@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QScrollArea, QLabel, QLineEdit, QListWidget,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QScrollArea, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QSplitter, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
+from pypsa_gui.visualization.location_diagram import location_buses, location_canvas_size, render_location_diagram
+from pypsa_gui.visualization.bus_diagram import bus_label
 from pypsa_gui.ui.pages.component_page import ComponentPage
 from pypsa_gui.ui.widgets.figure_panel import FigurePanel
 from pypsa_gui.visualization.bus_diagram import render_bus_diagram, diagram_canvas_width
@@ -37,6 +39,16 @@ class BusesPage(ComponentPage):
         self.bus_list = QListWidget()
         left_layout.addWidget(self.bus_search); left_layout.addWidget(self.bus_list)
         centre = QWidget(); centre_layout = QVBoxLayout(centre)
+        self.manual_buses = []
+        self.view_combo = QComboBox()
+        self.view_combo.addItems(["Bus", "Location", "Manual group"])
+        self.group_button = QPushButton("Choose buses…")
+        self.group_button.clicked.connect(self._choose_buses)
+        self.group_status = QLabel()
+        self.group_status.setWordWrap(True)
+        centre_layout.addWidget(self.view_combo)
+        centre_layout.addWidget(self.group_button)
+        centre_layout.addWidget(self.group_status)
         self.symbol_combo = QComboBox()
         self.symbol_combo.addItems(["Technology", "Electrical"])
         self.symbol_combo.setToolTip("Technology pictograms or generic electrical symbols; not an IEC-certified symbol set.")
@@ -68,6 +80,7 @@ class BusesPage(ComponentPage):
         outer.addWidget(self.tabs)
         self.selected_bus = None
         self.targets = {}
+        self.view_combo.currentTextChanged.connect(self._view_changed)
         self.symbol_combo.currentTextChanged.connect(self._draw)
         self.bus_search.textChanged.connect(self._filter_list)
         self.bus_list.currentItemChanged.connect(self._bus_changed)
@@ -89,7 +102,7 @@ class BusesPage(ComponentPage):
         self.bus_list.clear()
         if self.network is not None:
             for bus, row in self.network.buses.iterrows():
-                item = QListWidgetItem(f"{bus}  ·  {row.v_nom:g} kV")
+                item = QListWidgetItem(bus_label(self.network, bus).replace("\n", " · "))
                 item.setData(Qt.UserRole, str(bus)); self.bus_list.addItem(item)
         self.bus_list.blockSignals(False)
         self._filter_list(self.bus_search.text())
@@ -121,20 +134,26 @@ class BusesPage(ComponentPage):
         if current is None:
             return
         self.selected_bus = current.data(Qt.UserRole)
-        self.panel.title_edit.setText(f"Bus {self.selected_bus} · {self.network.buses.at[self.selected_bus, 'v_nom']:g} kV · local single-line diagram")
+        self._update_title()
         self._show_details("buses", self.selected_bus)
         self._draw()
 
     def _draw(self):
-        width = diagram_canvas_width(self.network, self.selected_bus)
-        self.panel.canvas.setMinimumWidth(width)
+        grouped = self.view_combo.currentText() != "Bus"
+        buses = self._group_buses()
+        width, height = location_canvas_size(self.network, buses) if grouped else (diagram_canvas_width(self.network, self.selected_bus), 700)
+        self.panel.canvas.setMinimumSize(width, height)
         self.panel.canvas.resize(max(width, self.diagram_scroll.viewport().width()),
-                                 max(700, self.diagram_scroll.viewport().height()))
-        self.targets = render_bus_diagram(
-            self.panel.figure, self.network, self.selected_bus,
-            title=self.panel.current_title(), resize_figure=False,
-            symbol_mode=self.symbol_combo.currentText(),
-        )
+                                 max(height, self.diagram_scroll.viewport().height()))
+        if grouped:
+            self.targets = render_location_diagram(self.panel.figure, self.network, buses,
+                title=self.panel.current_title(), resize_figure=False, symbol_mode=self.symbol_combo.currentText())
+            self.group_status.setText(f"{len(buses)} buses · visual grouping only · crossings without dots are not junctions" +
+                (" · No matching location; use Choose buses." if len(buses) == 1 and self.view_combo.currentText() == "Location" else ""))
+        else:
+            self.targets = render_bus_diagram(self.panel.figure, self.network, self.selected_bus,
+                title=self.panel.current_title(), resize_figure=False, symbol_mode=self.symbol_combo.currentText())
+            self.group_status.setText("")
         self.panel.toolbar.update(); self.panel.canvas.draw_idle()
 
 
@@ -209,3 +228,50 @@ class BusesPage(ComponentPage):
         self._window_placeholder.deleteLater()
         self._diagram_window = None
         self.tabs.setCurrentIndex(0)
+
+    def set_network(self, network):
+        if network is not self.network:
+            self.manual_buses = []
+        super().set_network(network)
+
+    def _group_buses(self):
+        if self.network is None or self.selected_bus not in self.network.buses.index:
+            return []
+        if self.view_combo.currentText() == "Location":
+            return location_buses(self.network, self.selected_bus)
+        if self.view_combo.currentText() == "Manual group":
+            return list(dict.fromkeys([self.selected_bus] + [b for b in self.manual_buses if b in self.network.buses.index]))
+        return [self.selected_bus]
+
+    def _update_title(self):
+        if self.network is None or self.selected_bus not in self.network.buses.index:
+            return
+        mode = self.view_combo.currentText()
+        self.panel.title_edit.setText((bus_label(self.network,self.selected_bus).replace("\n", " · ") if mode == "Bus" else f"{mode} · {self.selected_bus}") + " · single-line diagram")
+
+    def _view_changed(self):
+        self._update_title()
+        self._draw()
+
+    def _choose_buses(self):
+        if self.network is None:
+            return
+        dialog = QDialog(self); dialog.setWindowTitle("Choose buses to show together")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("The selected bus is always included. This does not modify the model."))
+        search = QLineEdit(); search.setPlaceholderText("Search buses…"); layout.addWidget(search)
+        listing = QListWidget(); layout.addWidget(listing)
+        selected = set(self._group_buses())
+        for bus in self.network.buses.index:
+            item=QListWidgetItem(str(bus)); item.setData(Qt.UserRole,str(bus))
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if bus in selected else Qt.Unchecked)
+            listing.addItem(item)
+        search.textChanged.connect(lambda text: [listing.item(i).setHidden(text.casefold() not in listing.item(i).text().casefold()) for i in range(listing.count())])
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject); layout.addWidget(buttons)
+        dialog.resize(500,600)
+        if dialog.exec() == QDialog.Accepted:
+            self.manual_buses=[listing.item(i).data(Qt.UserRole) for i in range(listing.count()) if listing.item(i).checkState()==Qt.Checked]
+            self.view_combo.setCurrentText("Manual group")
+            self._view_changed()
