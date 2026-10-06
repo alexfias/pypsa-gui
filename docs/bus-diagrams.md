@@ -55,3 +55,21 @@ pypsa-gui
 
 No new dependencies are required. This ZIP also includes the earlier geographical
 and schematic map improvements.
+
+## Technology symbols
+
+The Symbols dropdown selects Technology (default) or Electrical mode. Technology
+mode uses original vector pictograms for wind, PV, hydro, pumped hydro and batteries,
+and labelled generator circles for gas, coal, biomass and nuclear. Generic storage
+uses E; unknown generators retain G. Shapes and labels identify technologies without
+relying only on colour. Carrier colours are shared with the map. Electrical mode
+uses generic monochrome symbols. Neither mode claims IEC certification.
+
+Selection uses the component's carrier, not its name. Aliases include onwind,
+offwind-ac, offwind-dc, solar, PV, ror, OCGT, CCGT, lignite, biomass, battery, BESS
+and PHS. A battery represented as a Link remains a link/converter symbol.
+
+The vector symbol sheet is in `docs/images/technology-symbols.svg` with a PNG preview.
+This update changes `buses_page.py`, `bus_diagram.py`, this guide and the screenshot;
+it adds `visualization/technology_symbols.py` and `tests/test_technology_symbols.py`.
+All 30 tests pass, including carrier classification, vector export and mode switching.

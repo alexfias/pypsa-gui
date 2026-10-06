@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QScrollArea, QLabel, QLineEdit, QListWidget,
+    QAbstractItemView, QComboBox, QDialog, QScrollArea, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QSplitter, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -37,6 +37,11 @@ class BusesPage(ComponentPage):
         self.bus_list = QListWidget()
         left_layout.addWidget(self.bus_search); left_layout.addWidget(self.bus_list)
         centre = QWidget(); centre_layout = QVBoxLayout(centre)
+        self.symbol_combo = QComboBox()
+        self.symbol_combo.addItems(["Technology", "Electrical"])
+        self.symbol_combo.setToolTip("Technology pictograms or generic electrical symbols; not an IEC-certified symbol set.")
+        centre_layout.addWidget(QLabel("Symbols:"))
+        centre_layout.addWidget(self.symbol_combo)
         self.panel = FigurePanel("Local single-line diagram", minimum_canvas_height=380)
         self.panel.legend_checkbox.hide()
         # Preserve readable text at narrow dock widths; scroll instead of squeezing.
@@ -63,6 +68,7 @@ class BusesPage(ComponentPage):
         outer.addWidget(self.tabs)
         self.selected_bus = None
         self.targets = {}
+        self.symbol_combo.currentTextChanged.connect(self._draw)
         self.bus_search.textChanged.connect(self._filter_list)
         self.bus_list.currentItemChanged.connect(self._bus_changed)
         self.panel.title_edit.editingFinished.connect(self._draw)
@@ -127,6 +133,7 @@ class BusesPage(ComponentPage):
         self.targets = render_bus_diagram(
             self.panel.figure, self.network, self.selected_bus,
             title=self.panel.current_title(), resize_figure=False,
+            symbol_mode=self.symbol_combo.currentText(),
         )
         self.panel.toolbar.update(); self.panel.canvas.draw_idle()
 
