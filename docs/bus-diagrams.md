@@ -1,35 +1,51 @@
-# Local bus diagrams (step 1b)
+# Local bus diagrams
 
-Open **Components → Buses**. The new **Diagram** tab is the default; the existing
-editable table remains available under **Table**.
+Open **Components → Buses → Diagram**. The existing editable table is retained
+under **Table**.
 
-- Search the bus list by name or voltage, then select a bus.
-- The central horizontal busbar shows the selected bus and its nominal voltage.
-- Above it are connected lines, transformers and links leading to neighbouring buses.
-- Below it are generators, loads, storage units, stores and shunt impedances.
-- Click a neighbouring busbar/name to navigate. Click equipment or its label to
-  inspect its static parameters in the right panel. Disable Pan/Zoom before clicking.
-- Use Previous/Next feeders for crowded buses (six branches and six attached assets
-  per page). The busbar is repeated across pages; all components remain accessible.
-- Pan, zoom, reset and export PNG/SVG/PDF using the shared figure controls. An export
-  contains the current feeder page only.
-- Selecting a row in Table selects that bus for the Diagram tab. Overview bus links
-  also open the diagram. The table's existing search, sorting, copying and editing
-  remain in place.
+Select a bus in the searchable list. The diagram shows its busbar, every connected
+line/transformer/link, and all attached generators, loads, storage and shunts.
+Click neighbouring buses to navigate or equipment to inspect its static parameters.
+Disable toolbar Pan/Zoom before clicking components.
 
-This first version shows static topology one connection away. Navigate by clicking
-neighbours to explore further. It does not yet overlay time-dependent results,
-expand multiple hops, support dragging/saved positions or import pandapower.
-The symbols are simplified engineering symbols, not an IEC-certified symbol set.
-A multi-terminal link has one labelled feeder per remote terminal; repeated link
-names refer to the same component, not separate devices. No switch state is inferred.
+## One continuous diagram
 
-## Installation
+There is no pagination. The canvas widens with the number of connections, keeping
+space for readable labels. Scroll horizontally to see the entire bus. Small buses
+return to a smaller canvas. Use **Open diagram in separate window** to open a
+maximized explorer; close it to return to the tab. Inspection remains available.
 
-Copy the changed files into your step-1 repository, then run `python -m pip install -e .`.
-No dependencies were added beyond step 1.
+Long labels wrap and exceptionally long names end with an ellipsis. Hover to see
+the full ID, or click for component details. The selected bus name and voltage are
+in the title, away from connection labels.
 
-Files changed/added for this step:
+PNG/SVG/PDF export includes the entire diagram, including offscreen connections.
+Reset toolbar zoom with Home before exporting if you have zoomed into a subset.
+Large buses produce wide images; SVG/PDF are useful when retaining vector quality.
+
+Multi-terminal links have one labelled connection per remote terminal. Repeated
+link names refer to the same component. No switches or switch states are inferred.
+
+## Scope and validation
+
+This is static topology one connection away. Result overlays, multiple-hop
+expansion, drag-and-drop layout and pandapower import remain future work.
+Symbols are simplified rather than an IEC-certified symbol set.
+
+All 14 tests pass. Checks include complete connection coverage for crowded buses,
+scrolling, label overlap, PNG/SVG/PDF exports, neighbour navigation, component
+inspection, table integration and opening/closing the separate window. Qt tests
+run offscreen; Windows desktop behaviour still needs manual checking.
+
+Run from the project folder:
+
+```sh
+python -m pip install -e '.[dev]'
+python -m pytest -q
+pypsa-gui
+```
+
+## Files to update from the previous bus-diagram version
 
 - `src/pypsa_gui/ui/pages/buses_page.py`
 - `src/pypsa_gui/visualization/bus_diagram.py`
@@ -37,7 +53,5 @@ Files changed/added for this step:
 - `docs/bus-diagrams.md`
 - `docs/images/bus-diagram.png`
 
-Tests cover multi-terminal links, complete asset inclusion across feeder pages,
-SVG rendering, empty/isolated buses, clickable component details, neighbour navigation,
-table filtering and clearing the network. GUI tests use Qt's offscreen platform;
-Windows desktop behaviour still needs a manual check.
+No new dependencies are required. This ZIP also includes the earlier geographical
+and schematic map improvements.
