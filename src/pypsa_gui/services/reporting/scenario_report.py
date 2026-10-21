@@ -9,6 +9,10 @@ from typing import Any
 import matplotlib.pyplot as plt
 import pandas as pd
 import pypsa
+
+from pypsa_gui.services.emissions import get_total_emissions
+from pypsa_gui.services.metrics import load_timeseries, positive_generator_energy, snapshot_weights
+from pypsa_gui.services.prices import get_electricity_price_statistics
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
@@ -279,92 +283,12 @@ def _calculate_metrics(
     )
 
 
-def _snapshot_weights(
-    network: pypsa.Network,
-) -> pd.Series:
-    snapshot_weightings = getattr(
-        network,
-        "snapshot_weightings",
-        None,
-    )
-
-    if snapshot_weightings is None:
-        return pd.Series(
-            1.0,
-            index=network.snapshots,
-            dtype=float,
-        )
-
-    if isinstance(snapshot_weightings, pd.Series):
-        return (
-            snapshot_weightings
-            .reindex(network.snapshots)
-            .fillna(1.0)
-            .astype(float)
-        )
-
-    preferred_columns = (
-        "generators",
-        "objective",
-        "stores",
-    )
-
-    for column in preferred_columns:
-        if column in snapshot_weightings.columns:
-            return (
-                snapshot_weightings[column]
-                .reindex(network.snapshots)
-                .fillna(1.0)
-                .astype(float)
-            )
-
-    return pd.Series(
-        1.0,
-        index=network.snapshots,
-        dtype=float,
-    )
+def _snapshot_weights(network: pypsa.Network) -> pd.Series:
+    return snapshot_weights(network)
 
 
-def _annual_demand(
-    network: pypsa.Network,
-    weights: pd.Series,
-) -> float:
-    loads_t = getattr(network, "loads_t", None)
-
-    if loads_t is not None:
-        p_set = getattr(loads_t, "p_set", None)
-
-        if p_set is not None and not p_set.empty:
-            return float(
-                p_set
-                .multiply(weights, axis=0)
-                .sum()
-                .sum()
-            )
-
-        p = getattr(loads_t, "p", None)
-
-        if p is not None and not p.empty:
-            return float(
-                p
-                .multiply(weights, axis=0)
-                .sum()
-                .sum()
-            )
-
-    if (
-        not network.loads.empty
-        and "p_set" in network.loads.columns
-    ):
-        static_demand = float(
-            network.loads["p_set"]
-            .fillna(0.0)
-            .sum()
-        )
-
-        return static_demand * float(weights.sum())
-
-    return 0.0
+def _annual_demand(network: pypsa.Network, weights: pd.Series) -> float:
+    return float(load_timeseries(network).multiply(weights, axis=0).sum().sum())
 
 
 def _annual_generation_by_carrier(
@@ -383,12 +307,7 @@ def _annual_generation_by_carrier(
     if dispatch.empty:
         return pd.Series(dtype=float)
 
-    generator_energy = (
-        dispatch
-        .multiply(weights, axis=0)
-        .sum(axis=0)
-        .clip(lower=0.0)
-    )
+    generator_energy = positive_generator_energy(network).sum(axis=0)
 
     carriers = (
         network.generators["carrier"]
@@ -567,326 +486,15 @@ def _storage_energy_capacity(
 
 
 def _electricity_price_statistics(
-    network: pypsa.Network,
-    snapshot_weights: pd.Series,
-) -> tuple[
-    float | None,
-    float | None,
-    float | None,
-    float | None,
-]:
-    """
-    Return load-weighted electricity-price statistics in EUR/MWh.
-
-    Prices are taken from ``network.buses_t.marginal_price``. Only buses
-    serving electricity demand are included, which prevents hydrogen or
-    other auxiliary-bus prices from entering the statistics.
-
-    The average and standard deviation are weighted by electricity demand
-    and snapshot weighting. The minimum and maximum are the observed prices
-    during periods with positive demand at those buses.
-    """
-
-    buses_t = getattr(
-        network,
-        "buses_t",
-        None,
-    )
-
-    if buses_t is None:
-        return None, None, None, None
-
-    marginal_prices = getattr(
-        buses_t,
-        "marginal_price",
-        None,
-    )
-
-    if marginal_prices is None or marginal_prices.empty:
-        return None, None, None, None
-
-    marginal_prices = (
-        marginal_prices
-        .reindex(index=network.snapshots)
-        .apply(
-            pd.to_numeric,
-            errors="coerce",
-        )
-    )
-
-    load_by_bus = _electricity_load_by_bus(
-        network=network,
-    )
-
-    if load_by_bus.empty:
-        return None, None, None, None
-
-    common_buses = marginal_prices.columns.intersection(
-        load_by_bus.columns
-    )
-
-    if common_buses.empty:
-        return None, None, None, None
-
-    prices = marginal_prices.loc[
-        :,
-        common_buses,
-    ]
-
-    loads = load_by_bus.loc[
-        :,
-        common_buses,
-    ].clip(lower=0.0)
-
-    weighted_load = loads.multiply(
-        snapshot_weights,
-        axis=0,
-    )
-
-    valid = (
-        prices.notna()
-        & weighted_load.gt(0.0)
-    )
-
-    total_weight = float(
-        weighted_load.where(valid)
-        .sum()
-        .sum()
-    )
-
-    if total_weight <= 0.0:
-        return None, None, None, None
-
-    weighted_price_sum = float(
-        (
-            prices
-            * weighted_load
-        )
-        .where(valid)
-        .sum()
-        .sum()
-    )
-
-    average_price = (
-        weighted_price_sum
-        / total_weight
-    )
-
-    squared_deviation = (
-        prices
-        - average_price
-    ) ** 2
-
-    variance = float(
-        (
-            squared_deviation
-            * weighted_load
-        )
-        .where(valid)
-        .sum()
-        .sum()
-        / total_weight
-    )
-
-    standard_deviation = (
-        max(
-            variance,
-            0.0,
-        )
-        ** 0.5
-    )
-
-    valid_prices = prices.where(
-        valid
-    ).stack()
-
-    if valid_prices.empty:
-        return None, None, None, None
-
-    return (
-        float(average_price),
-        float(valid_prices.min()),
-        float(valid_prices.max()),
-        float(standard_deviation),
-    )
+    network: pypsa.Network, snapshot_weights: pd.Series,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    return get_electricity_price_statistics(network)
 
 
-def _electricity_load_by_bus(
-    network: pypsa.Network,
-) -> pd.DataFrame:
-    """
-    Return electricity demand indexed by snapshot and grouped by bus.
-    """
-
-    if (
-        network.loads.empty
-        or "bus" not in network.loads.columns
-    ):
-        return pd.DataFrame(
-            index=network.snapshots
-        )
-
-    load_buses = (
-        network.loads["bus"]
-        .fillna("")
-        .astype(str)
-    )
-
-    valid_loads = load_buses.ne("")
-
-    if not valid_loads.any():
-        return pd.DataFrame(
-            index=network.snapshots
-        )
-
-    load_names = network.loads.index[
-        valid_loads
-    ]
-
-    loads_t = getattr(
-        network,
-        "loads_t",
-        None,
-    )
-
-    load_values = None
-
-    if loads_t is not None:
-        p_set = getattr(
-            loads_t,
-            "p_set",
-            None,
-        )
-
-        if p_set is not None and not p_set.empty:
-            load_values = (
-                p_set
-                .reindex(
-                    index=network.snapshots,
-                    columns=load_names,
-                )
-                .apply(
-                    pd.to_numeric,
-                    errors="coerce",
-                )
-                .fillna(0.0)
-            )
-        else:
-            p = getattr(
-                loads_t,
-                "p",
-                None,
-            )
-
-            if p is not None and not p.empty:
-                load_values = (
-                    p
-                    .reindex(
-                        index=network.snapshots,
-                        columns=load_names,
-                    )
-                    .apply(
-                        pd.to_numeric,
-                        errors="coerce",
-                    )
-                    .fillna(0.0)
-                )
-
-    if load_values is None:
-        if "p_set" not in network.loads.columns:
-            return pd.DataFrame(
-                index=network.snapshots
-            )
-
-        static_loads = (
-            pd.to_numeric(
-                network.loads.loc[
-                    load_names,
-                    "p_set",
-                ],
-                errors="coerce",
-            )
-            .fillna(0.0)
-        )
-
-        load_values = pd.DataFrame(
-            [static_loads.to_numpy()] * len(network.snapshots),
-            index=network.snapshots,
-            columns=load_names,
-        )
-
-    bus_mapping = load_buses.reindex(
-        load_values.columns
-    )
-
-    grouped = (
-        load_values.T
-        .groupby(bus_mapping)
-        .sum()
-        .T
-    )
-
-    return grouped
-
-
-def _annual_generator_emissions(
-    network: pypsa.Network,
-    weights: pd.Series,
-) -> float | None:
-    if network.generators.empty:
+def _annual_generator_emissions(network: pypsa.Network, weights: pd.Series) -> float | None:
+    if network.generators.empty or network.generators_t.p.empty:
         return None
-
-    if "carrier" not in network.generators.columns:
-        return None
-
-    if "co2_emissions" not in network.carriers.columns:
-        return None
-
-    dispatch = getattr(
-        network.generators_t,
-        "p",
-        pd.DataFrame(),
-    )
-
-    if dispatch.empty:
-        return None
-
-    generator_energy = (
-        dispatch
-        .multiply(weights, axis=0)
-        .sum(axis=0)
-        .clip(lower=0.0)
-    )
-
-    carrier_emissions = (
-        network.generators["carrier"]
-        .map(network.carriers["co2_emissions"])
-        .fillna(0.0)
-        .astype(float)
-    )
-
-    if "efficiency" in network.generators.columns:
-        efficiency = (
-            network.generators["efficiency"]
-            .replace(0.0, pd.NA)
-            .fillna(1.0)
-            .astype(float)
-        )
-    else:
-        efficiency = pd.Series(
-            1.0,
-            index=network.generators.index,
-        )
-
-    emissions = (
-        generator_energy
-        .reindex(network.generators.index)
-        .fillna(0.0)
-        * carrier_emissions
-        / efficiency
-    )
-
-    return float(emissions.sum())
+    return get_total_emissions(network)
 
 
 def _optimised_or_nominal(
@@ -1518,11 +1126,11 @@ def _build_key_results_section(
             _format_currency(metrics.objective_eur),
         ],
         [
-            "Annual electricity demand",
+            "Demand (all loads, modelled period)",
             _format_energy(metrics.demand_mwh),
         ],
         [
-            "Annual generator output",
+            "Generator output (modelled period)",
             _format_energy(metrics.generation_mwh),
         ],
         [
@@ -1556,6 +1164,14 @@ def _build_key_results_section(
                 9.0 * cm,
                 7.5 * cm,
             ],
+        ),
+        Paragraph(
+            "Energy and generator CO2 totals use generator snapshot weights. CO2 uses signed "
+            "dispatch divided by time-varying efficiency and carrier factors in tCO2/MWh of "
+            "primary energy. Missing factors count as zero. These are generator contributions, "
+            "not full sector-coupled carbon accounts: storage inventory changes and separate "
+            "Link/Process emissions are excluded. Totals cover the represented modelled period.",
+            styles["BodyText"],
         ),
         Spacer(1, 0.5 * cm),
     ]
@@ -1669,7 +1285,7 @@ def _build_generation_section(
     elements: list[Any] = [
         Spacer(1, 0.7 * cm),
         Paragraph(
-            "Annual electricity generation",
+            "Generator output over the modelled period",
             styles["Heading1"],
         ),
     ]
@@ -1685,7 +1301,7 @@ def _build_generation_section(
 
     figure = _bar_chart(
         values=metrics.annual_generation_mwh / 1_000_000.0,
-        title="Annual generation by technology",
+        title="Generation by technology (modelled period)",
         axis_label="Generation [TWh]",
     )
 
@@ -1790,7 +1406,7 @@ def _build_interpretation_section(
             f"<b>{dominant_capacity}</b>."
         ),
         (
-            "Largest annual generator contribution: "
+            "Largest generator contribution over the modelled period: "
             f"<b>{dominant_generation}</b>."
         ),
         (
@@ -1801,7 +1417,7 @@ def _build_interpretation_section(
 
     questions = [
         "Why does the technology with the highest capacity not necessarily "
-        "provide the most annual electricity?",
+        "provide the most electricity over the modelled period?",
         "What role do batteries and hydrogen storage play in this scenario?",
         "Which technology would be affected most strongly by changing the "
         "scenario assumption?",

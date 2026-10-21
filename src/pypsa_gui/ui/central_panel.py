@@ -266,6 +266,14 @@ class CentralPanel(QWidget):
             widget.setEnabled(not self._optimisation_running)
             widget.settings_changed.connect(self.solver_settings_changed.emit)
 
+        if isinstance(widget, PreRunToolsPage):
+            widget.setEnabled(not self._optimisation_running)
+            widget.network_modified.connect(self._on_pre_run_modified)
+
+    def _on_pre_run_modified(self) -> None:
+        self.update_network_dependent_pages(self._current_network, self._current_locations)
+        self.network_modified.emit()
+
     def clear_module_pages(self) -> None:
         for page_name, widget in list(
             self._module_pages.items()
@@ -535,6 +543,9 @@ class CentralPanel(QWidget):
         settings_page = self.pages.get("Solver Settings")
         if isinstance(settings_page, SolverSettingsPage):
             settings_page.setEnabled(not running)
+        pre_run_page = self.pages.get("Pre-Run Tools")
+        if isinstance(pre_run_page, PreRunToolsPage):
+            pre_run_page.setEnabled(not running)
 
         page = self.pages.get("Optimisation")
 

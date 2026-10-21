@@ -22,7 +22,7 @@ The application combines a PySide6 interface with PyPSA, pandas, and Matplotlib.
 | Analysis | Network summary, nodal prices, line/link loading, storage operation, and generator-emissions views. |
 | Plots | Geographical or schematic network maps, installed-generation capacity mixes, time-series selection and aggregation, and capacity/generation views. |
 | Optimisation | Background execution, cancellation requests, a model-size preview, and PDF analysis reports for networks containing results. |
-| Pre-run tools | Add load-shedding generators, change nominal capacities, and select every nth snapshot. These operations have limitations described below. |
+| Pre-run tools | Add load-shedding generators, constrain per-asset or total investment capacity, and average consecutive snapshot blocks with preserved weights. Changes are validated together and clear previous results. |
 | Workflow records | Display recorded operations, canonical and semantic identifiers, and export a workflow record as JSON. |
 | Research modules | A module registration interface, a flow-tracing input preview, and an ML-surrogate configuration interface. The scientific backends are not complete. |
 
@@ -158,6 +158,38 @@ See the [network-map guide](docs/visualization-step-1.md) and [bus/location-diag
 
 ![Example location diagram](docs/images/location-diagram.png)
 
+## Scientific calculations and pre-run tools
+
+The Emissions page and PDF report use the same generator calculation:
+
+```text
+tCO2 per snapshot = generator dispatch / efficiency
+                   × carrier co2_emissions × snapshot_weightings.generators
+```
+
+Carrier factors are in **tCO2/MWh of primary energy**. Static and time-varying generator efficiencies are supported; emitting assets need finite positive efficiency. Signed dispatch and negative emission factors are retained, matching the generator contribution to PyPSA's primary-energy accounting. This does not include all terms of a sector-coupled CO2 constraint. Generation totals, intensity denominators and zero-emission shares use weighted positive generation. Totals describe the represented modelled period, not an assumed full year; economic investment-period discount weights are not physical energy weights.
+
+Demand calculations combine static loads with their time-series overrides. Electricity-price averages in the GUI and PDF use electricity demand and represented hours; auxiliary hydrogen/heat buses are excluded from that average. Bus price means, negative-price bus-hours, price-duration curves and congestion hours also use represented hours. Storage discharged energy and mean state of charge use `snapshot_weightings.stores`, matching storage-transition durations. The storage efficiency card shows the mean product of charging and discharging efficiencies. Scenario CO2 prices also correct time-varying marginal costs using time-varying efficiencies.
+
+In **Pre-Run Tools → Capacity Constraints**:
+
+- **Total capacity of all matches** adds a true `=`, `>=` or `<=` constraint on the sum of capacity. Fixed assets contribute their existing capacity; the optimiser chooses the distribution across extendable assets.
+- **Limit each matching asset individually** tightens `p_nom_min`/`p_nom_max` or `e_nom_min`/`e_nom_max`. Equality sets both bounds. Fixed assets remain fixed and must already satisfy the requested limit; conflicts are reported before changes are applied.
+- Generator, Link and StorageUnit limits are in **MW**; Store limits are in **MWh**. Investment extendability is never enabled implicitly.
+- Total limits retain the selected asset names and survive NetCDF saving. Deleted/renamed assets cause a validation error rather than silently changing the selection. Reapplying the same selection and sense replaces its limit. **Preview Changes** lists applied totals; **Clear GUI Total Capacity Limits** removes them. Per-asset bounds remain editable in component tables.
+
+For an exported network containing GUI total limits, solve through the application service:
+
+```python
+from pypsa_gui.services.optimisation import run_network_optimisation
+
+status, condition = run_network_optimisation(network)
+```
+
+**Temporal Downsampling** now averages consecutive blocks of `n` snapshots. Every weighting column is summed, including the final partial block. Input profiles use generator weights, storage inputs use store weights, and costs use objective weights. Generator efficiency is aggregated through its reciprocal (fuel per unit of output). Static inputs stay static; solved outputs are cleared. This preserves weighted demand, availability and inflow integrals, but does not guarantee an identical optimum, peak capacity, fuel consumption, or storage trajectory after reduction.
+
+Pre-run options are checked on a candidate network and applied together. A validation failure leaves the live network unchanged. Successful changes mark the session modified, refresh dependent pages, and clear previous results; rerun optimisation before analysing or exporting results. Pre-run tools are disabled during a solve. Load-shedding capacity based on peak load includes both static and dynamic demand.
+
 ## Known limitations
 
 The following distinctions matter when using the current version:
@@ -167,11 +199,11 @@ The following distinctions matter when using the current version:
 | Solver lifecycle | Applied settings persist for the open session, not across application restarts. Cancellation is best effort and depends on the running solver model exposing a termination method; it may be unavailable during model construction or in some solver/library versions. |
 | Power flow | The navigation page is a placeholder, and the menu action does not execute a power flow. |
 | Component editing | Renaming a component in a general component table changes its static index without renaming its time-series columns. Avoid this operation for assets with time series. Validation and refresh after edits are incomplete. |
-| Saving changes | Modified-state tracking is incomplete for table and pre-run edits. Closing the application does not prompt to save modified networks. Save explicitly; the session list and workspace state are not a persistent project format. |
-| Temporal reduction | Pre-Run Tools keeps every nth snapshot without aggregating the intervening data or adjusting snapshot weights. This changes represented energy and duration; it is not a validated annual time-aggregation method. |
-| Capacity controls | The pre-run capacity tool changes `p_nom` or `e_nom`; it does not implement the advertised inequalities as investment bounds or aggregate optimisation constraints. |
-| Emissions and other totals | The Emissions page omits generator-efficiency correction and snapshot weighting. The PDF report applies both for generator emissions, so the two can disagree. Some other analysis views also count snapshots as hours. Both emissions views have a generator-focused scope. |
-| Result validity | Editing inputs does not systematically invalidate old results. PDF availability is inferred from generator-dispatch data, not from a fresh successful solve. Rerun after input changes and inspect solver termination status. |
+| Saving changes | Pre-run changes mark the session modified; general table-edit tracking remains incomplete. Closing the application does not prompt to save modified networks. Save explicitly; the session list and workspace state are not a persistent project format. |
+| Temporal reduction | Weighted block averaging preserves represented duration and weighted input profiles, but smooths peaks and changes correlations/storage behaviour. Unit commitment, maintenance, ramp limits, fixed storage-state targets, transport delays, multi-period and stochastic networks are rejected by this tool. |
+| Capacity controls | Per-asset limits tighten investment bounds. Total limits are saved in network metadata and added by the GUI optimisation service, including previews. Plain external `network.optimize()` does not install these custom limits; use `run_network_optimisation` or add them explicitly. Total limits currently support single-period, deterministic networks. |
+| Emissions scope | GUI and PDF share weighted, efficiency-corrected generator emissions. This is not a complete sector-coupled carbon account: non-cyclic storage inventory changes and separate Link/Process emissions are excluded. Missing carrier factors count as zero; invalid emitting-generator efficiencies are rejected. |
+| Result validity | Pre-run changes clear old results and the model. Other input-edit paths do not yet systematically invalidate results. PDF availability is inferred from generator-dispatch data, not from a fresh successful solve. Rerun after input changes and inspect solver termination status. |
 | Workflow records | Selected creation, loading, and optimisation operations are recorded. Not every edit is captured; workflow JSON is exported separately and is not a complete replayable project archive. |
 | Research modules | Flow Tracing currently previews input arrays for link-based networks; it does not calculate flow attribution. ML Surrogate can save/load configuration, but dataset processing, training, and evaluation are placeholders. |
 
@@ -210,14 +242,16 @@ For a headless Linux run:
 QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg python -m pytest -q
 ```
 
-The suite contains **55 test cases**: 33 visualisation checks and 22 solver-configuration checks. The latter include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
+The suite contains **90 test cases**: 33 visualisation checks, 22 solver-configuration checks and 35 scientific-consistency checks. Solver tests include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
 
-The suite was run with Python 3.12, PyPSA 1.4.0, HiGHS 1.15.1, PySide6 6.12.0, and pandas 3.0.6. This is evidence for the covered behaviour, not full application or cross-platform validation. The repository does not yet include a CI workflow or broad regression tests for scenario construction, editing, and scientific metrics.
+Scientific checks cover analytic weighted-emissions examples, agreement with a binding PyPSA CO2 constraint, dynamic CO2 pricing, static/dynamic load combinations, weighted prices/storage/congestion, real HiGHS capacity investments, NetCDF constraint persistence, aggregation conservation, invalid-input rejection, atomic GUI changes and PDF generation. NetCDF tests disable PyPSA's optional online version check.
+
+The suite was run with Python 3.12, PyPSA 1.4.0, HiGHS 1.15.1, PySide6 6.12.0, and pandas 3.0.6. This is evidence for the covered behaviour, not full application or cross-platform validation. The repository does not yet include a CI workflow or broad regression coverage for all scenario construction and editing paths.
 
 Priorities for the next development stage:
 
 1. Centralise validated network edits, safe renaming, result invalidation, and save-state tracking.
-2. Share consistent weighted metrics between GUI pages and reports; correct temporal reduction and capacity controls.
+2. Extend carbon accounting to sector-coupled networks and validate temporal-reduction accuracy on larger, representative models.
 3. Add regression tests for those workflows and run them in CI with a documented dependency set; broaden solver and platform coverage.
 4. Implement power flow and complete research-module backends as separate, tested additions.
 

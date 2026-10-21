@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pypsa
 
+from pypsa_gui.services.metrics import snapshot_weights, weighted_mean
+
 
 def _safe_abs_df(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None:
@@ -77,10 +79,20 @@ def get_combined_congestion_table(network: pypsa.Network) -> pd.DataFrame:
                 {
                     "component": "Line",
                     "name": asset,
-                    "mean_loading": float(s.mean()),
+                    "mean_loading": float(weighted_mean(s, snapshot_weights(network))),
                     "max_loading": float(s.max()),
-                    "hours_above_90": int((s > 0.9).sum()),
-                    "hours_above_100": int((s > 1.0).sum()),
+                    "hours_above_90": float(
+                        snapshot_weights(network)
+                        .reindex(s.index)
+                        .where(s > 0.9, 0)
+                        .sum()
+                    ),
+                    "hours_above_100": float(
+                        snapshot_weights(network)
+                        .reindex(s.index)
+                        .where(s > 1.0, 0)
+                        .sum()
+                    ),
                 }
             )
 
@@ -94,10 +106,20 @@ def get_combined_congestion_table(network: pypsa.Network) -> pd.DataFrame:
                 {
                     "component": "Link",
                     "name": asset,
-                    "mean_loading": float(s.mean()),
+                    "mean_loading": float(weighted_mean(s, snapshot_weights(network))),
                     "max_loading": float(s.max()),
-                    "hours_above_90": int((s > 0.9).sum()),
-                    "hours_above_100": int((s > 1.0).sum()),
+                    "hours_above_90": float(
+                        snapshot_weights(network)
+                        .reindex(s.index)
+                        .where(s > 0.9, 0)
+                        .sum()
+                    ),
+                    "hours_above_100": float(
+                        snapshot_weights(network)
+                        .reindex(s.index)
+                        .where(s > 1.0, 0)
+                        .sum()
+                    ),
                 }
             )
 
@@ -113,9 +135,11 @@ def get_combined_congestion_table(network: pypsa.Network) -> pd.DataFrame:
             ]
         )
 
-    return pd.DataFrame(records).sort_values(
-        ["hours_above_100", "max_loading"], ascending=False
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame(records)
+        .sort_values(["hours_above_100", "max_loading"], ascending=False)
+        .reset_index(drop=True)
+    )
 
 
 def get_congestion_summary_stats(network: pypsa.Network) -> dict[str, float | int]:
@@ -216,13 +240,31 @@ def get_branch_map_data(
     line_loading = get_line_loading(network)
     if not network.lines.empty:
         if metric == "mean_loading":
-            values = line_loading.mean(axis=0) if not line_loading.empty else pd.Series(dtype=float)
+            values = (
+                weighted_mean(line_loading, snapshot_weights(network))
+                if not line_loading.empty
+                else pd.Series(dtype=float)
+            )
         elif metric == "max_loading":
-            values = line_loading.max(axis=0) if not line_loading.empty else pd.Series(dtype=float)
+            values = (
+                line_loading.max(axis=0)
+                if not line_loading.empty
+                else pd.Series(dtype=float)
+            )
         elif metric == "hours_congested":
-            values = (line_loading > threshold).sum(axis=0) if not line_loading.empty else pd.Series(dtype=float)
+            values = (
+                (line_loading > threshold)
+                .multiply(snapshot_weights(network), axis=0)
+                .sum(axis=0)
+                if not line_loading.empty
+                else pd.Series(dtype=float)
+            )
         else:
-            values = line_loading.mean(axis=0) if not line_loading.empty else pd.Series(dtype=float)
+            values = (
+                weighted_mean(line_loading, snapshot_weights(network))
+                if not line_loading.empty
+                else pd.Series(dtype=float)
+            )
 
         if not values.empty:
             df = network.lines[["bus0", "bus1"]].copy()
@@ -234,13 +276,31 @@ def get_branch_map_data(
     link_loading = get_link_loading(network)
     if not network.links.empty:
         if metric == "mean_loading":
-            values = link_loading.mean(axis=0) if not link_loading.empty else pd.Series(dtype=float)
+            values = (
+                weighted_mean(link_loading, snapshot_weights(network))
+                if not link_loading.empty
+                else pd.Series(dtype=float)
+            )
         elif metric == "max_loading":
-            values = link_loading.max(axis=0) if not link_loading.empty else pd.Series(dtype=float)
+            values = (
+                link_loading.max(axis=0)
+                if not link_loading.empty
+                else pd.Series(dtype=float)
+            )
         elif metric == "hours_congested":
-            values = (link_loading > threshold).sum(axis=0) if not link_loading.empty else pd.Series(dtype=float)
+            values = (
+                (link_loading > threshold)
+                .multiply(snapshot_weights(network), axis=0)
+                .sum(axis=0)
+                if not link_loading.empty
+                else pd.Series(dtype=float)
+            )
         else:
-            values = link_loading.mean(axis=0) if not link_loading.empty else pd.Series(dtype=float)
+            values = (
+                weighted_mean(link_loading, snapshot_weights(network))
+                if not link_loading.empty
+                else pd.Series(dtype=float)
+            )
 
         if not values.empty:
             df = network.links[["bus0", "bus1"]].copy()

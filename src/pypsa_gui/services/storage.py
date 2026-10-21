@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import pypsa
 
+from pypsa_gui.services.metrics import snapshot_weights, weighted_mean
+
 
 def _empty_series(index: pd.Index | None = None) -> pd.Series:
     if index is None:
@@ -37,9 +39,11 @@ def get_storage_unit_summary(network: pypsa.Network) -> dict[str, float]:
     else:
         total_energy = 0.0
 
-    eff_cols = [c for c in ["efficiency_store", "efficiency_dispatch"] if c in su.columns]
+    eff_cols = [
+        c for c in ["efficiency_store", "efficiency_dispatch"] if c in su.columns
+    ]
     if eff_cols:
-        avg_eff = su[eff_cols].mean(axis=1).mean()
+        avg_eff = su[eff_cols].prod(axis=1).mean()
     else:
         avg_eff = 0.0
 
@@ -95,15 +99,20 @@ def get_charge_discharge_timeseries(
     network: pypsa.Network,
     storage_name: str | None = None,
 ) -> tuple[pd.Series, pd.Series]:
-    dispatch = get_storage_dispatch_timeseries(network, storage_name)
-
-    # In PyPSA storage_units_t.p:
-    # positive = discharge to system
-    # negative = charging from system
-    discharge = dispatch.clip(lower=0.0)
-    charge = (-dispatch.clip(upper=0.0))
-
-    return charge, discharge
+    if network is None:
+        return _empty_series(), _empty_series()
+    p = network.storage_units_t.p
+    if p.empty:
+        return _empty_series(network.snapshots), _empty_series(network.snapshots)
+    # Split before summing: charging at one asset must not cancel discharge at
+    # another. Prefer PyPSA's separate variables when available.
+    discharge = network.storage_units_t.p_dispatch
+    charge = network.storage_units_t.p_store
+    if discharge.empty or charge.empty:
+        discharge, charge = p.clip(lower=0), -p.clip(upper=0)
+    if storage_name and storage_name in p.columns:
+        return charge[storage_name], discharge[storage_name]
+    return charge.sum(axis=1), discharge.sum(axis=1)
 
 
 def get_storage_dispatch_by_asset(network: pypsa.Network) -> pd.Series:
@@ -115,9 +124,16 @@ def get_storage_dispatch_by_asset(network: pypsa.Network) -> pd.Series:
     ):
         return pd.Series(dtype=float)
 
-    p = network.storage_units_t.p
-    # total discharged energy proxy over modeled horizon
-    return p.clip(lower=0.0).sum(axis=0).sort_values(ascending=False)
+    p = network.storage_units_t.p_dispatch
+    if p.empty:
+        p = network.storage_units_t.p
+    # Discharged energy, using the same durations as the storage balance.
+    return (
+        p.clip(lower=0.0)
+        .multiply(snapshot_weights(network, "stores"), axis=0)
+        .sum()
+        .sort_values(ascending=False)
+    )
 
 
 def get_storage_soc_by_asset(network: pypsa.Network) -> pd.Series:
@@ -130,7 +146,9 @@ def get_storage_soc_by_asset(network: pypsa.Network) -> pd.Series:
         return pd.Series(dtype=float)
 
     soc = network.storage_units_t.state_of_charge
-    return soc.mean(axis=0).sort_values(ascending=False)
+    return weighted_mean(soc, snapshot_weights(network, "stores")).sort_values(
+        ascending=False
+    )
 
 
 def get_storage_power_by_bus(network: pypsa.Network) -> pd.Series:
@@ -140,8 +158,4 @@ def get_storage_power_by_bus(network: pypsa.Network) -> pd.Series:
     su = network.storage_units.copy()
     power_col = "p_nom_opt" if "p_nom_opt" in su.columns else "p_nom"
 
-    return (
-        su.groupby("bus")[power_col]
-        .sum()
-        .sort_values(ascending=False)
-    )
+    return su.groupby("bus")[power_col].sum().sort_values(ascending=False)

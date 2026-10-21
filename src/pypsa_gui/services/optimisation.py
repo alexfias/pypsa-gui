@@ -7,6 +7,10 @@ import linopy
 import pypsa
 
 from pypsa_gui.models.solver_settings import SolverSettings
+from pypsa_gui.services.capacity_constraints import (
+    add_capacity_constraints,
+    validate_capacity_constraints,
+)
 
 
 @dataclass
@@ -63,7 +67,9 @@ def run_network_optimisation(
 ):
     settings = deepcopy(settings) if settings is not None else SolverSettings()
     options = validate_solver_configuration(settings)
+    validate_capacity_constraints(network)
     network.optimize.create_model(**settings.to_model_options())
+    add_capacity_constraints(network)
     if settings.solver_name == "highs":
         # Forcing an LP algorithm in HiGHS can drop integer/quadratic terms.
         if options.get("solver", "choose") != "choose" and network.model.type != "LP":
@@ -91,7 +97,9 @@ def preview_network_optimisation(
     settings: SolverSettings | None = None,
 ) -> OptimisationPreview:
     settings = settings if settings is not None else SolverSettings()
+    validate_capacity_constraints(network)
     network.optimize.create_model(**settings.to_model_options())
+    add_capacity_constraints(network)
 
     model = getattr(network, "model", None)
     if model is None:
@@ -157,6 +165,7 @@ class OptimisationRunner:
 
     def validate(self) -> None:
         validate_solver_configuration(self.settings)
+        validate_capacity_constraints(self.network)
 
     def run(self):
         return run_network_optimisation(self.network, self.settings)

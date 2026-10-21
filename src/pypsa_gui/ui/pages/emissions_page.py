@@ -24,7 +24,9 @@ from pypsa_gui.services.emissions import (
 
 
 class InfoCard(QGroupBox):
-    def __init__(self, title: str, value: str = "-", parent: QWidget | None = None) -> None:
+    def __init__(
+        self, title: str, value: str = "-", parent: QWidget | None = None
+    ) -> None:
         super().__init__(title, parent)
 
         self.value_label = QLabel(value)
@@ -55,18 +57,20 @@ class EmissionsPage(QWidget):
 
         self.network: pypsa.Network | None = None
 
-        self.total_emissions_card = InfoCard("Total Emissions")
+        self.total_emissions_card = InfoCard("Generator CO₂ Emissions")
         self.average_intensity_card = InfoCard("Avg. Emission Intensity")
         self.top_carrier_card = InfoCard("Top Emitting Carrier")
         self.zero_emission_share_card = InfoCard("Zero-Emission Share")
 
         self.breakdown_mode_combo = QComboBox()
         self.breakdown_mode_combo.addItems(["By Carrier", "By Bus"])
-        self.breakdown_mode_combo.currentIndexChanged.connect(self.update_plots)
+        self.breakdown_mode_combo.currentIndexChanged.connect(self.refresh)
 
         self.note_label = QLabel(
-            "Operational emissions are currently calculated from positive generator dispatch "
-            "using carrier-specific 'co2_emissions' factors."
+            "Generator CO₂ = signed dispatch / efficiency × carrier factor × represented hours. "
+            "Time-varying efficiency is included. This is generator-only accounting; storage "
+            "inventory changes and separate Link/Process emissions are excluded. Intensity and "
+            "zero-emission share use weighted positive generation."
         )
         self.note_label.setWordWrap(True)
         self.note_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -78,7 +82,7 @@ class EmissionsPage(QWidget):
         self.warning_label.setStyleSheet("color: #b36b00; font-style: italic;")
 
         self.breakdown_plot = PlotCard("Emission Breakdown")
-        self.timeseries_plot = PlotCard("System Emissions Over Time")
+        self.timeseries_plot = PlotCard("Generator Emissions Over Time")
 
         # Inner content widget
         content_widget = QWidget()
@@ -116,9 +120,22 @@ class EmissionsPage(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
-        self.update_cards()
-        self.update_warnings()
-        self.update_plots()
+        try:
+            self.update_cards()
+            self.update_warnings()
+            self.update_plots()
+        except ValueError as exc:
+            for card in (
+                self.total_emissions_card,
+                self.average_intensity_card,
+                self.top_carrier_card,
+                self.zero_emission_share_card,
+            ):
+                card.set_value("-")
+            self.warning_label.setText(str(exc))
+            for plot in (self.breakdown_plot, self.timeseries_plot):
+                plot.figure.clear()
+                plot.canvas.draw()
 
     def update_cards(self) -> None:
         if self.network is None:
@@ -210,9 +227,9 @@ class EmissionsPage(QWidget):
             return
 
         ax.plot(series.index, series.values)
-        ax.set_title("System Emissions Over Time")
+        ax.set_title("Generator Emissions Over Time")
         ax.set_ylabel("tCO₂")
-        ax.set_xlabel("Snapshot")
+        ax.set_xlabel("Snapshot (weighted tCO₂ per block)")
         ax.tick_params(axis="x", rotation=45)
 
         figure.tight_layout()

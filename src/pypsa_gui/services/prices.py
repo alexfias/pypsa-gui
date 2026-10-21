@@ -5,6 +5,8 @@ from typing import Any
 import pandas as pd
 import pypsa
 
+from pypsa_gui.services.metrics import load_by_bus, snapshot_weights, weighted_mean
+
 
 def get_nodal_prices(network: pypsa.Network | None) -> pd.DataFrame:
     if network is None:
@@ -27,30 +29,7 @@ def get_bus_load_timeseries(network: pypsa.Network | None) -> pd.DataFrame:
     if network is None:
         return pd.DataFrame()
 
-    if network.loads.empty:
-        return pd.DataFrame(index=getattr(network, "snapshots", pd.Index([])))
-
-    if not hasattr(network.loads_t, "p_set"):
-        return pd.DataFrame(index=getattr(network, "snapshots", pd.Index([])))
-
-    p_set = network.loads_t.p_set.copy()
-    if p_set.empty:
-        return pd.DataFrame(index=getattr(network, "snapshots", pd.Index([])))
-
-    load_bus_map = network.loads["bus"]
-
-    load_per_bus = {}
-    for load_name in p_set.columns:
-        if load_name not in load_bus_map.index:
-            continue
-        bus = load_bus_map.loc[load_name]
-        load_per_bus.setdefault(bus, []).append(load_name)
-
-    result = pd.DataFrame(index=p_set.index)
-    for bus, load_names in load_per_bus.items():
-        result[bus] = p_set[load_names].sum(axis=1)
-
-    return result
+    return load_by_bus(network, electricity_only=True)
 
 
 def get_system_price_series(
@@ -71,7 +50,7 @@ def get_system_price_series(
     prices, loads = prices.align(loads, join="left", axis=0)
     prices, loads = prices.align(loads, join="left", axis=1)
 
-    loads = loads.fillna(0.0)
+    loads = loads.fillna(0.0).clip(lower=0).where(prices.notna(), 0)
 
     total_load = loads.sum(axis=1)
     weighted_sum = (prices * loads).sum(axis=1)
@@ -86,7 +65,7 @@ def get_average_price_by_bus(network: pypsa.Network | None) -> pd.Series:
     if prices.empty:
         return pd.Series(dtype=float)
 
-    return prices.mean(axis=0).sort_values(ascending=False)
+    return weighted_mean(prices, snapshot_weights(network)).sort_values(ascending=False)
 
 
 def get_negative_price_counts(network: pypsa.Network | None) -> pd.Series:
@@ -94,7 +73,12 @@ def get_negative_price_counts(network: pypsa.Network | None) -> pd.Series:
     if prices.empty:
         return pd.Series(dtype=int)
 
-    return (prices < 0.0).sum(axis=0).sort_values(ascending=False)
+    return (
+        (prices < 0.0)
+        .multiply(snapshot_weights(network), axis=0)
+        .sum()
+        .sort_values(ascending=False)
+    )
 
 
 def get_price_summary_stats(network: pypsa.Network | None) -> dict[str, Any]:
@@ -114,13 +98,53 @@ def get_price_summary_stats(network: pypsa.Network | None) -> dict[str, Any]:
     avg_by_bus = get_average_price_by_bus(network)
 
     return {
-        "avg_price": float(system_price.mean()) if not system_price.empty else None,
+        "avg_price": get_electricity_price_statistics(network)[0],
         "min_price": float(prices.min().min()),
         "max_price": float(prices.max().max()),
-        "negative_hours": int((prices < 0.0).sum().sum()),
-        "spread_95_5": float(system_price.quantile(0.95) - system_price.quantile(0.05))
-        if not system_price.empty
-        else None,
+        "negative_hours": float(get_negative_price_counts(network).sum()),
+        "spread_95_5": (
+            weighted_price_quantile(system_price, snapshot_weights(network), 0.95)
+            - weighted_price_quantile(system_price, snapshot_weights(network), 0.05)
+            if not system_price.empty
+            else None
+        ),
         "highest_avg_bus": avg_by_bus.index[0] if not avg_by_bus.empty else None,
         "lowest_avg_bus": avg_by_bus.index[-1] if not avg_by_bus.empty else None,
     }
+
+
+def weighted_price_quantile(values: pd.Series, weights: pd.Series, q: float) -> float:
+    """Inverse weighted empirical CDF (represented-hour price duration curve)."""
+    ordered = values.dropna().sort_values()
+    weights = weights.reindex(ordered.index)
+    if weights.sum() <= 0 or ordered.empty:
+        return float("nan")
+    cumulative = weights.cumsum() / weights.sum()
+    return float(ordered.iloc[min(cumulative.searchsorted(q), len(ordered) - 1)])
+
+
+def get_electricity_price_statistics(network: pypsa.Network):
+    """Demand-and-duration weighted average/stddev, and observed min/max.
+
+    Only buses serving positive electricity demand enter these statistics.
+    """
+    prices = get_nodal_prices(network)
+    loads = load_by_bus(network, electricity_only=True).clip(lower=0)
+    columns = prices.columns.intersection(loads.columns)
+    if columns.empty:
+        return None, None, None, None
+    prices = prices.reindex(index=network.snapshots, columns=columns)
+    energy = loads[columns].multiply(snapshot_weights(network), axis=0)
+    valid = prices.notna() & energy.gt(0)
+    energy = energy.where(valid, 0)
+    denominator = float(energy.sum().sum())
+    if denominator <= 0:
+        return None, None, None, None
+    mean = float((prices * energy).sum().sum() / denominator)
+    variance = float(((prices - mean) ** 2 * energy).sum().sum() / denominator)
+    return (
+        mean,
+        float(prices.where(valid).min().min()),
+        float(prices.where(valid).max().max()),
+        max(variance, 0) ** 0.5,
+    )

@@ -64,7 +64,7 @@ class StoragePage(QWidget):
         self.asset_count_card = InfoCard("Storage Units", "-")
         self.total_power_card = InfoCard("Total Power", "-")
         self.total_energy_card = InfoCard("Approx. Energy", "-")
-        self.avg_eff_card = InfoCard("Avg. Efficiency", "-")
+        self.avg_eff_card = InfoCard("Mean Round-Trip Efficiency", "-")
 
         self.soc_plot = PlotCard("State of Charge")
         self.charge_discharge_plot = PlotCard("Charging vs Discharging")
