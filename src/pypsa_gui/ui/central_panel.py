@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
 from PySide6.QtCore import Signal
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from pypsa_gui.models.network_location import NetworkLocation
 from pypsa_gui.models.session_view import PAGE_TO_SECTION
+from pypsa_gui.models.solver_settings import SolverSettings
 from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
 from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.buses_page import BusesPage
@@ -53,6 +55,7 @@ class CentralPanel(QWidget):
     scenario_requested = Signal(object)
     create_empty_network_requested = Signal()
     run_optimisation_requested = Signal()
+    solver_settings_changed = Signal(object)
 
     new_network_requested = Signal()
     open_network_requested = Signal()
@@ -92,6 +95,8 @@ class CentralPanel(QWidget):
 
         self._current_network: Any | None = None
         self._current_workflow: WorkflowRecord | None = None
+        self._solver_settings = SolverSettings()
+        self._optimisation_running = False
         self._current_locations: (
             dict[str, NetworkLocation] | None
         ) = None
@@ -251,9 +256,15 @@ class CentralPanel(QWidget):
             name == "Optimisation"
             and isinstance(widget, OptimisationPage)
         ):
+            widget.set_solver_settings(self._solver_settings)
             widget.run_optimisation_requested.connect(
                 self.run_optimisation_requested.emit
             )
+
+        if isinstance(widget, SolverSettingsPage):
+            widget.load_settings(self._solver_settings)
+            widget.setEnabled(not self._optimisation_running)
+            widget.settings_changed.connect(self.solver_settings_changed.emit)
 
     def clear_module_pages(self) -> None:
         for page_name, widget in list(
@@ -503,6 +514,15 @@ class CentralPanel(QWidget):
         if isinstance(page, OptimisationPage):
             page.refresh_results_state()
 
+    def set_solver_settings(self, settings: SolverSettings) -> None:
+        self._solver_settings = deepcopy(settings)
+        page = self.pages.get("Solver Settings")
+        if isinstance(page, SolverSettingsPage):
+            page.load_settings(settings)
+        page = self.pages.get("Optimisation")
+        if isinstance(page, OptimisationPage):
+            page.set_solver_settings(settings)
+
     def set_optimisation_running(
         self,
         running: bool,
@@ -510,6 +530,11 @@ class CentralPanel(QWidget):
         """
         Update the Optimisation page while a solve is running.
         """
+
+        self._optimisation_running = running
+        settings_page = self.pages.get("Solver Settings")
+        if isinstance(settings_page, SolverSettingsPage):
+            settings_page.setEnabled(not running)
 
         page = self.pages.get("Optimisation")
 

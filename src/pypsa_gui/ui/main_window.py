@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from uuid import uuid4
 
 import pypsa
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from pypsa_gui.models.network_session import NetworkSession
+from pypsa_gui.models.solver_settings import SolverSettings
 from pypsa_gui.models.scenario_definition import (
     ScenarioDefinition,
 )
@@ -62,6 +64,8 @@ class MainWindow(QMainWindow):
         self.optimisation_runner: OptimisationRunner | None = None
         self.optimisation_worker: OptimisationWorker | None = None
         self.optimisation_running = False
+        self._optimisation_session_id: str | None = None
+        self.default_solver_settings = SolverSettings()
 
         self.setWindowTitle("pypsa-gui")
         self.resize(1200, 800)
@@ -314,6 +318,9 @@ class MainWindow(QMainWindow):
 
         self.central_panel.run_optimisation_requested.connect(
             self.on_run_optimisation
+        )
+        self.central_panel.solver_settings_changed.connect(
+            self.on_solver_settings_changed
         )
 
         self.setCentralWidget(
@@ -629,6 +636,11 @@ class MainWindow(QMainWindow):
                 required_sections
             )
 
+        self.central_panel.set_solver_settings(
+            session.solver_settings if session is not None
+            else self.default_solver_settings
+        )
+
         if session is None:
             if pages_rebuilt:
                 self._refresh_research_modules()
@@ -739,6 +751,7 @@ class MainWindow(QMainWindow):
             is_modified=False,
             view_options=view_options,
             workflow=workflow or WorkflowRecord(),
+            solver_settings=deepcopy(self.default_solver_settings),
         )
 
         self.network_store.add_session(
@@ -1116,6 +1129,17 @@ class MainWindow(QMainWindow):
     # Optimisation
     # ------------------------------------------------------------------
 
+    def on_solver_settings_changed(self, settings: SolverSettings) -> None:
+        if self.optimisation_running:
+            return
+        session = self.active_session()
+        if session is None:
+            self.default_solver_settings = deepcopy(settings)
+        else:
+            session.solver_settings = deepcopy(settings)
+        self.central_panel.set_solver_settings(settings)
+        self.log(f"Applied solver settings: {settings.solver_name}")
+
     def on_run_optimisation(self) -> None:
         session = self.active_session()
 
@@ -1134,13 +1158,22 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.log(
-            "Starting optimisation for: "
-            f"{session.name}"
-        )
+        runner = OptimisationRunner(session.network, session.solver_settings)
+        try:
+            runner.validate()
+        except (ValueError, RuntimeError) as exc:
+            self.log(f"Invalid solver configuration: {exc}")
+            QMessageBox.critical(self, "Solver configuration", str(exc))
+            return
 
-        self.optimisation_runner = OptimisationRunner(
-            session.network
+        self.optimisation_runner = runner
+        self._optimisation_session_id = session.id
+        self.log(
+            f"Starting optimisation for: {session.name}; "
+            f"solver={runner.settings.solver_name}; "
+            f"options={runner.settings.to_solver_options()}; "
+            f"model_options={runner.settings.to_model_options()}; "
+            f"assign_all_duals={runner.settings.assign_all_duals}"
         )
 
         self.optimisation_worker = OptimisationWorker(
@@ -1200,36 +1233,31 @@ class MainWindow(QMainWindow):
             self,
             status,
     ) -> None:
-        session = self.active_session()
+        session = self.network_store.get_session(self._optimisation_session_id)
+        runner = self.optimisation_runner
 
         self.log(
             "Optimisation finished. "
             f"Status: {status}"
         )
 
-        if session is not None:
+        if session is not None and runner is not None:
             recorder = WorkflowRecorder(
                 session.workflow
             )
             recorder.record_optimization(
-                solver="gurobi",
-                options={
-                    "Method": 2,
-                    "Crossover": 0,
-                },
+                solver=runner.settings.solver_name,
+                options=runner.settings.to_solver_options(),
+                model_options=runner.settings.to_model_options(),
+                assign_all_duals=runner.settings.assign_all_duals,
                 status=str(status),
-            )
-            self.central_panel.set_workflow(
-                session.workflow
             )
 
             session.is_modified = True
 
-            # Rebuild the pages with the solved network.
-            self._refresh_active_session_ui()
-
-            # Ensure that the PDF report button is enabled.
-            self.central_panel.refresh_optimisation_results_state()
+            if session is self.active_session():
+                self._refresh_active_session_ui()
+                self.central_panel.refresh_optimisation_results_state()
 
         QMessageBox.information(
             self,
@@ -1271,6 +1299,7 @@ class MainWindow(QMainWindow):
 
         self.optimisation_worker = None
         self.optimisation_runner = None
+        self._optimisation_session_id = None
 
     # ------------------------------------------------------------------
     # Other actions

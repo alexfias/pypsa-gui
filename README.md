@@ -8,7 +8,7 @@ The application combines a PySide6 interface with PyPSA, pandas, and Matplotlib.
 
 **Status:** active prototype, package version `0.1.0`. The application now contains substantial modelling and analysis functionality, but some workflows are incomplete and numerical validation needs broader test coverage. See [Known limitations](#known-limitations) before using results in a study.
 
-**Solver note:** the current GUI optimisation runner uses **Gurobi**. The Solver Settings page is not yet connected to that runner; choosing HiGHS there does not change the solver used.
+**Solvers:** HiGHS is included and selected by default. Gurobi is also supported when installed and licensed. Apply your choice in **Run → Solver Settings**; model previews and optimisation runs use the applied settings for the active network.
 
 ## What is implemented
 
@@ -85,7 +85,7 @@ python -m pypsa_gui.main
 
 ### Solving networks
 
-Inspection, editing, and plotting do not require a Gurobi installation. Running optimisation through the current GUI does. Install its Python interface in the same environment:
+HiGHS is installed with the application and works without a separate commercial solver licence. To use Gurobi instead, install its Python interface in the same environment:
 
 ```bash
 python -m pip install gurobipy
@@ -93,7 +93,16 @@ python -m pip install gurobipy
 
 Configure a Gurobi licence suitable for your model size; see the [official installation guide](https://support.gurobi.com/hc/en-us/articles/360044290292-How-do-I-install-Gurobi-for-Python).
 
-Although `highspy` is a project dependency and HiGHS appears in Solver Settings, the runner currently calls Gurobi with `Method=2` and `Crossover=0`. Other settings on that page are not passed to the run either. A missing Gurobi installation or unsuitable licence therefore prevents GUI optimisation even when HiGHS is installed.
+Open **Run → Solver Settings**, choose `highs` or `gurobi`, adjust the options, and click **Apply**. Then open **Run → Optimisation** or use the optimisation toolbar action. The applied solver is displayed above the run controls.
+
+- Applied settings are retained separately for each open network, including when switching workspaces. They are kept in memory, not saved in the network's NetCDF file. Applying settings before loading a network changes the defaults for new sessions.
+- Transmission losses and linearised unit commitment are passed to model construction for both preview and solve. Dual assignment is passed to the solve step.
+- Method, crossover, presolve, threads, time limit, relative MIP gap, and primal/dual tolerances are translated to the selected solver's native options. Auto/None/Default omits an option; a MIP gap of zero is supported explicitly.
+- Method codes are explained in the control's tooltip. HiGHS supports Auto, primal simplex, dual simplex, and interior point here; Gurobi also offers concurrent methods. Use Auto for mixed-integer or quadratic HiGHS models: forcing an LP algorithm is rejected to prevent dropping integer or quadratic terms.
+- Extra options must be a JSON object of native solver options; these override matching fields above. For example, use `{"ipm_optimality_tolerance": 1e-8}` for HiGHS or `{"BarConvTol": 1e-8}` for Gurobi. Unknown or invalid HiGHS options are rejected before building the model.
+- A running optimisation uses a copy of the applied settings. The settings page is disabled during the run, and the log and workflow JSON record the solver, effective options, model flags, and dual-assignment choice.
+
+Unavailable solvers produce an explicit error; the application does not silently switch solvers. Gurobi checks its licence when starting a solve. See the native [HiGHS options](https://ergo-code.github.io/HiGHS/dev/options/definitions/) and [Gurobi parameters](https://docs.gurobi.com/projects/optimizer/en/current/reference/parameters.html) for advanced settings.
 
 ### Optional dependencies
 
@@ -113,7 +122,7 @@ The base installation includes PyPSA, HiGHS, pandas, PySide6, Matplotlib, Networ
 3. Choose **Full** to expose all sections. The **Loaded Networks** dock selects the active network.
 4. Explore **Overview**, the component tables, and **Components → Buses**. Use the bus diagram to inspect equipment and neighbouring buses.
 5. Open **Plots → Network Map**. Try Auto, Geographical, and Schematic layouts, and switch between topology and installed generation capacity.
-6. If Gurobi is configured, open **Run → Optimisation**, optionally preview the model size, then run the model. Check the returned solver status before interpreting results.
+6. Optionally configure **Run → Solver Settings** and click **Apply**. Open **Run → Optimisation**, preview the model size if useful, and run the model. HiGHS works with the default installation. Check the returned solver status before interpreting results.
 7. Explore **Analysis** and **Plots**. Networks that already contain results can be inspected without rerunning optimisation. The Optimisation page also offers PDF report export.
 8. Save the network through **File → Save As NetCDF...**. Export the workflow JSON separately from **Overview → Workflow** if needed.
 
@@ -155,7 +164,7 @@ The following distinctions matter when using the current version:
 
 | Area | Limitation |
 | --- | --- |
-| Solver configuration | Solver Settings is not wired into optimisation; Gurobi and its options are hard-coded in the runner. Cancellation depends on the solver model exposing a termination method. |
+| Solver lifecycle | Applied settings persist for the open session, not across application restarts. Cancellation is best effort and depends on the running solver model exposing a termination method; it may be unavailable during model construction or in some solver/library versions. |
 | Power flow | The navigation page is a placeholder, and the menu action does not execute a power flow. |
 | Component editing | Renaming a component in a general component table changes its static index without renaming its time-series columns. Avoid this operation for assets with time series. Validation and refresh after edits are incomplete. |
 | Saving changes | Modified-state tracking is incomplete for table and pre-run edits. Closing the application does not prompt to save modified networks. Save explicitly; the session list and workspace state are not a persistent project format. |
@@ -182,7 +191,7 @@ The bundled teaching network was exported by an older PyPSA version and may prod
 | `src/pypsa_gui/workflows/` | Workflow operations, recording, JSON serialisation, and identifiers. |
 | `src/pypsa_gui/modules/` | Research-module interface, registry, and initial modules. |
 | `src/pypsa_gui/data/` | Bundled teaching network, technology presets, and example time-series profiles. |
-| `tests/` | Automated renderer, diagram, export, and selected Qt-interaction checks. |
+| `tests/` | Renderer, diagram, export, Qt-interaction, solver-configuration, and HiGHS integration checks. |
 
 The intended design separates UI, session state, numerical services, and plotting. Some builders and reports remain large and would benefit from further separation. Expensive analysis-page data refreshes are deferred until those pages are opened; model previews and report generation still run on the UI thread.
 
@@ -201,15 +210,16 @@ For a headless Linux run:
 QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg python -m pytest -q
 ```
 
-The current suite contains **33 test cases** across four visualisation-focused test files. It passed during the October 2026 review with Python 3.12, PyPSA 1.4.0, PySide6 6.12.0, and pandas 3.0.6. This is evidence for the covered behaviour, not full application or cross-platform validation. The repository does not yet include a CI workflow or broad regression tests for optimisation, scenario construction, editing, and scientific metrics.
+The suite contains **55 test cases**: 33 visualisation checks and 22 solver-configuration checks. The latter include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
+
+The suite was run with Python 3.12, PyPSA 1.4.0, HiGHS 1.15.1, PySide6 6.12.0, and pandas 3.0.6. This is evidence for the covered behaviour, not full application or cross-platform validation. The repository does not yet include a CI workflow or broad regression tests for scenario construction, editing, and scientific metrics.
 
 Priorities for the next development stage:
 
-1. Connect solver settings to the runner and support HiGHS end to end.
-2. Centralise validated network edits, safe renaming, result invalidation, and save-state tracking.
-3. Share consistent weighted metrics between GUI pages and reports; correct temporal reduction and capacity controls.
-4. Add regression tests for those workflows and run them in CI with a documented dependency set.
-5. Implement power flow and complete research-module backends as separate, tested additions.
+1. Centralise validated network edits, safe renaming, result invalidation, and save-state tracking.
+2. Share consistent weighted metrics between GUI pages and reports; correct temporal reduction and capacity controls.
+3. Add regression tests for those workflows and run them in CI with a documented dependency set; broaden solver and platform coverage.
+4. Implement power flow and complete research-module backends as separate, tested additions.
 
 Contributions and issue reports are welcome. Include the relevant steps, a minimal network when possible, dependency versions, and the solver status or traceback.
 

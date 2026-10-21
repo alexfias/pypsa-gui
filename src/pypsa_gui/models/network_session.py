@@ -9,6 +9,7 @@ import pypsa
 
 from pypsa_gui.models.network_location import NetworkLocation
 from pypsa_gui.models.session_view import SessionViewOptions
+from pypsa_gui.models.solver_settings import SolverSettings
 from pypsa_gui.workflows.models import WorkflowRecord
 
 
@@ -31,3 +32,5 @@ class NetworkSession:
     workflow: WorkflowRecord = field(
         default_factory=WorkflowRecord
     )
+
+    solver_settings: SolverSettings = field(default_factory=SolverSettings)

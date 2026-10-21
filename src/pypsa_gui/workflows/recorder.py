@@ -119,6 +119,8 @@ class WorkflowRecorder:
         *,
         solver: str,
         options: Mapping[str, Any] | None = None,
+        model_options: Mapping[str, Any] | None = None,
+        assign_all_duals: bool | None = None,
         formulation: str | None = None,
         status: str | None = None,
     ) -> None:
@@ -130,6 +132,8 @@ class WorkflowRecorder:
                 "solver": solver,
                 "formulation": formulation,
                 "options": dict(options or {}),
+                "model_options": dict(model_options or {}),
+                "assign_all_duals": assign_all_duals,
                 "status": status,
             },
         )
