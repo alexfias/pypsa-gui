@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
+
+
+from pypsa_gui.services.network_edits import edit_component, edit_block_reason
 
 
 class BusesTableModel(QAbstractTableModel):
+    edit_applied = Signal(object)
+    edit_rejected = Signal(str)
+
     def __init__(self, network=None) -> None:
         super().__init__()
         self.network = network
@@ -39,7 +45,9 @@ class BusesTableModel(QAbstractTableModel):
             return ""
         return str(value)
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ):
         if role != Qt.DisplayRole or self.network is None:
             return None
 
@@ -55,11 +63,15 @@ class BusesTableModel(QAbstractTableModel):
         if not index.isValid():
             return Qt.ItemIsEnabled
 
-        return (
-            Qt.ItemIsEnabled
-            | Qt.ItemIsSelectable
-            | Qt.ItemIsEditable
-        )
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if self.network is not None and not edit_block_reason(
+            self.network,
+            "buses",
+            self.network.buses.index[index.row()],
+            self.columns[index.column()],
+        ):
+            flags |= Qt.ItemIsEditable
+        return flags
 
     def setData(self, index: QModelIndex, value, role: int = Qt.EditRole) -> bool:
         if role != Qt.EditRole or not index.isValid() or self.network is None:
@@ -69,13 +81,11 @@ class BusesTableModel(QAbstractTableModel):
         column = self.columns[index.column()]
 
         try:
-            if column in {"x", "y", "v_nom"}:
-                parsed_value = float(value)
-            else:
-                parsed_value = str(value)
-        except ValueError:
+            change = edit_component(self.network, "buses", bus_name, column, value)
+        except (ValueError, TypeError, KeyError) as exc:
+            self.edit_rejected.emit(str(exc))
             return False
-
-        self.network.buses.at[bus_name, column] = parsed_value
-        self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
+        if change is not None:
+            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
+            self.edit_applied.emit(change)
         return True

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pypsa_gui.services.metrics import snapshot_weights
 from pypsa_gui.services.prices import (
     get_average_price_by_bus,
     get_nodal_prices,
@@ -69,7 +70,7 @@ class PricesPage(QWidget):
         self.avg_price_card = InfoCard("Average Price")
         self.min_price_card = InfoCard("Minimum Price")
         self.max_price_card = InfoCard("Maximum Price")
-        self.neg_hours_card = InfoCard("Negative-Price Hours")
+        self.neg_hours_card = InfoCard("Negative-Price Bus-Hours")
         self.spread_card = InfoCard("95–5 Spread")
         self.high_bus_card = InfoCard("Highest Avg Bus")
         self.low_bus_card = InfoCard("Lowest Avg Bus")
@@ -187,9 +188,11 @@ class PricesPage(QWidget):
             ax.text(0.5, 0.5, "No price data available", ha="center", va="center")
             ax.set_axis_off()
         else:
-            sorted_prices = series.sort_values(ascending=False).reset_index(drop=True)
-            ax.plot(sorted_prices.index, sorted_prices.values)
-            ax.set_xlabel("Sorted Hour")
+            sorted_prices = series.dropna().sort_values(ascending=False)
+            durations = snapshot_weights(self.network).reindex(sorted_prices.index)
+            edges = [0.0, *durations.cumsum().tolist()]
+            ax.stairs(sorted_prices.values, edges, baseline=None)
+            ax.set_xlabel("Cumulative represented hours")
             ax.set_ylabel("€/MWh")
             ax.grid(True, alpha=0.3)
 

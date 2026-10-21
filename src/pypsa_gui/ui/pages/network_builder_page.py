@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pypsa_gui.services.locations import load_locations, sync_locations
+
 from enum import Enum
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
@@ -1274,6 +1276,10 @@ class NetworkBuilderPage(QWidget):
             return
 
         values = dialog.values()
+        if values["name"] in self.network.links.index:
+            QMessageBox.warning(self, "Link Already Exists", f'A link named "{values["name"]}" already exists.')
+            return
+
 
         try:
             self.network.add(
@@ -1479,75 +1485,26 @@ class NetworkBuilderPage(QWidget):
             index += 1
         return f"{base_name} {index}"
 
-    def _infer_locations_from_network(
-        self,
-        network: Any,
-    ) -> dict[str, NetworkLocation]:
-        locations: dict[str, NetworkLocation] = {}
+    def _infer_locations_from_network(self, network) -> dict[str, NetworkLocation]:
+        return load_locations(network)
 
-        if network.buses.empty:
-            return locations
+    def _ensure_locations_for_unassigned_buses(self) -> None:
+        if self.network is not None:
+            sync_locations(self.network, self.locations)
 
-        has_location_column = "location" in network.buses.columns
-
-        for bus_name, bus in network.buses.iterrows():
-            if bus[["x", "y"]].isna().any():
-                continue
-
-            raw_location_id = (
-                bus.get("location")
-                if has_location_column
-                else None
-            )
-            location_id = (
-                str(raw_location_id)
-                if raw_location_id is not None
-                and str(raw_location_id).strip()
-                and str(raw_location_id).lower() != "nan"
-                else str(uuid4())
-            )
-
-            if location_id not in locations:
-                locations[location_id] = NetworkLocation(
-                    id=location_id,
-                    name=str(bus_name),
-                    longitude=float(bus["x"]),
-                    latitude=float(bus["y"]),
-                    bus_names=[],
-                )
-
-            locations[location_id].bus_names.append(str(bus_name))
-            network.buses.loc[bus_name, "location"] = location_id
-
-        return locations
-
-    def _ensure_locations_for_unassigned_buses(
-        self,
-    ) -> None:
+    def refresh_network_contents(self) -> None:
         if self.network is None:
             return
-
-        assigned_bus_names = {
-            bus_name
-            for location in self.locations.values()
-            for bus_name in location.bus_names
-        }
-
-        for bus_name, bus in self.network.buses.iterrows():
-            if str(bus_name) in assigned_bus_names:
-                continue
-            if bus[["x", "y"]].isna().any():
-                continue
-
-            location_id = str(uuid4())
-            self.locations[location_id] = NetworkLocation(
-                id=location_id,
-                name=str(bus_name),
-                longitude=float(bus["x"]),
-                latitude=float(bus["y"]),
-                bus_names=[str(bus_name)],
+        sync_locations(self.network, self.locations)
+        if self.selected_location_id in self.locations:
+            self.location_editor.set_context(
+                network=self.network, location=self.locations[self.selected_location_id]
             )
-            self.network.buses.loc[bus_name, "location"] = location_id
+        elif self.selected_location_id is not None:
+            self.selected_location_id = None
+            self.location_editor.set_context(network=None, location=None)
+            self.show_geographic_editor()
+        self.refresh_map()
 
     # ------------------------------------------------------------------
     # Map creation

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import math
+
 from collections.abc import Iterable
 from pathlib import Path
 
 import pandas as pd
 import pypsa
+
+from pypsa_gui.services.emissions import get_generator_emission_rates
+from pypsa_gui.services.metrics import load_by_bus, snapshot_weights
 
 from pypsa_gui.models.scenario_definition import (
     CO2Policy,
@@ -1275,197 +1280,31 @@ def _apply_co2_policy(
     )
 
 
-def _annual_electricity_demand_mwh(
-    network: pypsa.Network,
-) -> float:
-    """
-    Return weighted annual electricity demand in MWh.
-
-    Dynamic load time series are preferred. Static load values are used as
-    a fallback when no time series are available.
-    """
-
-    snapshot_weightings = getattr(
-        network,
-        "snapshot_weightings",
-        None,
-    )
-
-    if snapshot_weightings is None:
-        weights = pd.Series(
-            1.0,
-            index=network.snapshots,
-            dtype=float,
-        )
-    elif isinstance(
-        snapshot_weightings,
-        pd.Series,
-    ):
-        weights = (
-            snapshot_weightings
-            .reindex(network.snapshots)
-            .fillna(1.0)
-            .astype(float)
-        )
-    else:
-        preferred_columns = (
-            "generators",
-            "objective",
-            "stores",
-        )
-
-        weights = None
-
-        for column in preferred_columns:
-            if column in snapshot_weightings.columns:
-                weights = (
-                    snapshot_weightings[column]
-                    .reindex(network.snapshots)
-                    .fillna(1.0)
-                    .astype(float)
-                )
-                break
-
-        if weights is None:
-            weights = pd.Series(
-                1.0,
-                index=network.snapshots,
-                dtype=float,
-            )
-
-    loads_t = getattr(
-        network,
-        "loads_t",
-        None,
-    )
-
-    if loads_t is not None:
-        p_set = getattr(
-            loads_t,
-            "p_set",
-            None,
-        )
-
-        if p_set is not None and not p_set.empty:
-            return float(
-                p_set
-                .multiply(
-                    weights,
-                    axis=0,
-                )
-                .sum()
-                .sum()
-            )
-
-        p = getattr(
-            loads_t,
-            "p",
-            None,
-        )
-
-        if p is not None and not p.empty:
-            return float(
-                p
-                .multiply(
-                    weights,
-                    axis=0,
-                )
-                .sum()
-                .sum()
-            )
-
-    if (
-        not network.loads.empty
-        and "p_set" in network.loads.columns
-    ):
-        static_demand_mw = float(
-            network.loads["p_set"]
-            .fillna(0.0)
-            .astype(float)
-            .sum()
-        )
-
-        return (
-            static_demand_mw
-            * float(
-                weights.sum()
-            )
-        )
-
-    return 0.0
+def _annual_electricity_demand_mwh(network: pypsa.Network) -> float:
+    """Represented electricity demand, including both static and dynamic loads."""
+    return float(load_by_bus(network, electricity_only=True).multiply(
+        snapshot_weights(network), axis=0
+    ).sum().sum())
 
 
-def _apply_co2_price(
-    network: pypsa.Network,
-    price_eur_per_tonne: float,
-) -> None:
-    """
-    Add a CO₂-price contribution to generator marginal costs.
-
-    The carrier's ``co2_emissions`` value is divided by generator efficiency.
-    Existing marginal costs are retained and the CO₂ cost is added.
-    """
-
-    if price_eur_per_tonne < 0:
-        raise ValueError(
-            "The CO₂ price cannot be negative."
-        )
-
-    if price_eur_per_tonne == 0:
+def _apply_co2_price(network: pypsa.Network, price_eur_per_tonne: float) -> None:
+    """Add a carbon price to static and dynamic marginal costs consistently."""
+    if not math.isfinite(price_eur_per_tonne) or price_eur_per_tonne < 0:
+        raise ValueError("The CO₂ price must be finite and non-negative.")
+    if price_eur_per_tonne == 0 or network.generators.empty:
         return
-
-    if network.generators.empty:
-        return
-
-    if "carrier" not in network.generators.columns:
-        return
-
-    if "co2_emissions" not in network.carriers.columns:
-        raise ValueError(
-            "The source network's carriers do not provide "
-            "'co2_emissions' values."
-        )
-
-    emissions = (
-        network.generators["carrier"]
-        .map(
-            network.carriers["co2_emissions"]
-        )
-        .fillna(0.0)
-        .astype(float)
-    )
-
-    if "efficiency" in network.generators.columns:
-        efficiency = (
-            network.generators["efficiency"]
-            .replace(
-                0.0,
-                pd.NA,
-            )
-            .fillna(1.0)
-            .astype(float)
-        )
-    else:
-        efficiency = pd.Series(
-            1.0,
-            index=network.generators.index,
-        )
-
-    carbon_cost = (
-        price_eur_per_tonne
-        * emissions
-        / efficiency
-    )
-
-    if "marginal_cost" not in network.generators.columns:
-        network.generators["marginal_cost"] = 0.0
-
-    network.generators["marginal_cost"] = (
-        network.generators["marginal_cost"]
-        .fillna(0.0)
-        .astype(float)
-        + carbon_cost
-    )
+    rates = get_generator_emission_rates(network)
+    costs = network.get_switchable_as_dense("Generator", "marginal_cost")
+    priced = costs + price_eur_per_tonne * rates
+    # Keep static inputs static when possible. Preserve dynamic overrides, which
+    # otherwise override a surcharge added only to generators.marginal_cost.
+    dynamic = network.generators_t.marginal_cost.copy()
+    for name in network.generators.index:
+        if name in dynamic or name in network.generators_t.efficiency:
+            dynamic[name] = priced[name]
+        elif not priced.empty:
+            network.generators.at[name, "marginal_cost"] = float(priced[name].iloc[0])
+    network.generators_t.marginal_cost = dynamic
 
 
 def _apply_absolute_co2_cap(

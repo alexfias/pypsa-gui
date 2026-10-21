@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 
 import pypsa
 from PySide6.QtCore import Qt, Signal
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pypsa_gui.models.solver_settings import SolverSettings
 from pypsa_gui.services.optimisation import preview_network_optimisation
 from pypsa_gui.services.reporting import (
     generate_scenario_report,
@@ -56,6 +58,9 @@ class OptimisationPage(QWidget):
         super().__init__(parent)
 
         self.network: pypsa.Network | None = None
+        self.solver_settings = SolverSettings()
+        self.solver_label = QLabel()
+        self.solver_label.setWordWrap(True)
 
         self.preview_button = QPushButton(
             "Preview Model"
@@ -180,6 +185,7 @@ class OptimisationPage(QWidget):
         )
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.solver_label)
         layout.addLayout(
             action_layout
         )
@@ -200,6 +206,16 @@ class OptimisationPage(QWidget):
         self.preview_button.setEnabled(False)
         self.run_button.setEnabled(False)
         self.export_report_button.setEnabled(False)
+        self.set_solver_settings(self.solver_settings)
+
+    def set_solver_settings(self, settings: SolverSettings) -> None:
+        self.solver_settings = deepcopy(settings)
+        name = "HiGHS" if settings.solver_name == "highs" else "Gurobi"
+        self.solver_label.setText(
+            f"Applied solver: {name}. Change options in Run → Solver Settings, "
+            "then click Apply."
+        )
+        self._clear_preview()
 
     def set_network(
         self,
@@ -315,7 +331,7 @@ class OptimisationPage(QWidget):
 
         try:
             preview = preview_network_optimisation(
-                self.network
+                self.network, self.solver_settings
             )
         except Exception as exc:
             self.status_label.setText(

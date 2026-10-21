@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pypsa
+
+from pypsa_gui.services.metrics import positive_generator_energy, snapshot_weights
 
 
 def get_carrier_emission_factors(network: pypsa.Network) -> pd.Series:
     """
-    Return carrier-specific emission factors in tCO2/MWh.
+    Return carrier-specific emission factors in tCO2/MWh of primary energy.
 
     Falls back to 0.0 if the carrier table or the co2_emissions column
     is missing or incomplete.
@@ -17,24 +20,51 @@ def get_carrier_emission_factors(network: pypsa.Network) -> pd.Series:
     return network.carriers["co2_emissions"].fillna(0.0).astype(float)
 
 
-def get_generator_emissions(network: pypsa.Network) -> pd.DataFrame:
-    """
-    Return generator emissions time series [tCO2 per snapshot].
+def get_generator_emission_rates(network: pypsa.Network) -> pd.DataFrame:
+    """Generator-specific tCO2/MWh of output, using dynamic efficiency.
 
-    Emissions are computed from positive generator dispatch only:
-        emissions = max(p, 0) * carrier_emission_factor
+    Zero-factor assets do not need an efficiency correction. Invalid efficiency
+    for an emitting asset is an error, not an implicit assumption of 100%.
+    """
+    factors = network.generators.carrier.map(
+        get_carrier_emission_factors(network)
+    ).fillna(0.0)
+    if not np.isfinite(factors).all():
+        raise ValueError("Carrier emission factors must be finite.")
+    rates = pd.DataFrame(0.0, index=network.snapshots, columns=network.generators.index)
+    emitting = factors.index[factors.ne(0)]
+    if len(emitting):
+        efficiency = network.get_switchable_as_dense("Generator", "efficiency").loc[
+            :, emitting
+        ]
+        if (
+            not np.isfinite(efficiency.to_numpy()).all()
+            or (efficiency <= 0).any().any()
+        ):
+            raise ValueError(
+                "Emitting generators must have finite, positive efficiency at every snapshot."
+            )
+        rates.loc[:, emitting] = (1.0 / efficiency).multiply(
+            factors.loc[emitting], axis=1
+        )
+    return rates
+
+
+def get_generator_emissions(network: pypsa.Network) -> pd.DataFrame:
+    """Generator contribution to primary-energy CO2 accounting [tCO2/snapshot].
+
+    Signed dispatch / efficiency * carrier tCO2/MWh_primary * generator hours.
+    This does not include non-cyclic Store/StorageUnit inventory changes or
+    separate Link/Process emissions in sector-coupled models.
     """
     if network.generators.empty or network.generators_t.p.empty:
         return pd.DataFrame(index=network.snapshots)
-
-    dispatch = network.generators_t.p.copy()
-    dispatch = dispatch.reindex(columns=network.generators.index, fill_value=0.0)
-    dispatch = dispatch.clip(lower=0.0)
-
-    emission_factors = get_carrier_emission_factors(network)
-    generator_factors = network.generators["carrier"].map(emission_factors).fillna(0.0)
-
-    return dispatch.multiply(generator_factors, axis=1)
+    dispatch = network.generators_t.p.reindex(
+        index=network.snapshots, columns=network.generators.index, fill_value=0.0
+    )
+    return (dispatch * get_generator_emission_rates(network)).multiply(
+        snapshot_weights(network), axis=0
+    )
 
 
 def get_system_emissions_series(network: pypsa.Network) -> pd.Series:
@@ -91,16 +121,14 @@ def get_total_generation(network: pypsa.Network) -> float:
     if network.generators.empty or network.generators_t.p.empty:
         return 0.0
 
-    dispatch = network.generators_t.p.reindex(columns=network.generators.index, fill_value=0.0)
-    dispatch = dispatch.clip(lower=0.0)
-    return float(dispatch.sum().sum())
+    return float(positive_generator_energy(network).sum().sum())
 
 
 def get_average_emission_intensity(network: pypsa.Network) -> float:
     """
     Average operational emission intensity [gCO2/kWh].
 
-    Assumes carrier co2_emissions are expressed in tCO2/MWh.
+    Carrier co2_emissions are expressed in tCO2/MWh of primary energy.
     """
     total_generation = get_total_generation(network)
     if total_generation <= 0.0:
@@ -117,19 +145,14 @@ def get_zero_emission_generation_share(network: pypsa.Network) -> float:
     if network.generators.empty or network.generators_t.p.empty:
         return 0.0
 
-    dispatch = network.generators_t.p.reindex(columns=network.generators.index, fill_value=0.0)
-    dispatch = dispatch.clip(lower=0.0)
-
+    energy = positive_generator_energy(network)
     emission_factors = get_carrier_emission_factors(network)
     generator_factors = network.generators["carrier"].map(emission_factors).fillna(0.0)
-
-    total_generation = float(dispatch.sum().sum())
+    total_generation = float(energy.sum().sum())
     if total_generation <= 0.0:
         return 0.0
-
     zero_emission_generators = generator_factors[generator_factors == 0.0].index
-    zero_emission_generation = float(dispatch[zero_emission_generators].sum().sum())
-
+    zero_emission_generation = float(energy[zero_emission_generators].sum().sum())
     return 100.0 * zero_emission_generation / total_generation
 
 

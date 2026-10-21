@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import pandas as pd
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -16,11 +22,19 @@ from PySide6.QtWidgets import (
 )
 
 
+from pypsa_gui.services.network_edits import edit_component, edit_block_reason
+
+
 class ComponentTableModel(QAbstractTableModel):
+    edit_applied = Signal(object)
+    edit_rejected = Signal(str)
+
     def __init__(self, component_name: str, network=None) -> None:
         super().__init__()
         self._component_name = component_name
         self._network = network
+        self.locations = None
+        self.editing_enabled = True
         self._rows: list[dict[str, object]] = []
         self._columns: list[str] = []
         self._editable_columns: set[str] = set()
@@ -49,12 +63,19 @@ class ComponentTableModel(QAbstractTableModel):
         if role == Qt.UserRole:
             return value
 
+        if role == Qt.ToolTipRole:
+            return edit_block_reason(
+                self._network, self._component_name, row["name"], column
+            )
+
         if role == Qt.TextAlignmentRole:
             return Qt.AlignLeft | Qt.AlignVCenter
 
         return None
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ):
         if role != Qt.DisplayRole:
             return None
 
@@ -70,82 +91,47 @@ class ComponentTableModel(QAbstractTableModel):
         column = self._columns[index.column()]
         flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
 
-        if column in self._editable_columns:
+        if (
+            self.editing_enabled
+            and column in self._editable_columns
+            and not edit_block_reason(
+                self._network,
+                self._component_name,
+                self._rows[index.row()]["name"],
+                column,
+            )
+        ):
             flags |= Qt.ItemIsEditable
 
         return flags
 
     def setData(self, index: QModelIndex, value, role: int = Qt.EditRole) -> bool:
-        if role != Qt.EditRole or not index.isValid():
+        if role != Qt.EditRole or not index.isValid() or not self.editing_enabled:
             return False
-
+        if self._network is None or index.row() >= len(self._rows):
+            return False
         column = self._columns[index.column()]
         if column not in self._editable_columns:
             return False
-
         row = self._rows[index.row()]
-        component_id = row["name"]
-        old_value = row.get(column, "")
-
-        if column == "name":
-            new_name = str(value).strip()
-            if not new_name:
-                return False
-
-            old_name = row["name"]
-
-            if new_name == old_name:
-                return True
-
-            if self._network is None:
-                return False
-
-            df = getattr(self._network, self._component_name, None)
-            if df is None:
-                return False
-
-            if new_name in df.index:
-                return False
-
-            df.rename(index={old_name: new_name}, inplace=True)
-            self._rows[index.row()]["name"] = new_name
-
-            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole, Qt.UserRole])
-            return True
-
         try:
-            parsed_value = self._parse_value(value, old_value)
-        except ValueError:
+            change = edit_component(
+                self._network,
+                self._component_name,
+                row["name"],
+                column,
+                value,
+                locations=self.locations,
+            )
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            self.edit_rejected.emit(str(exc))
             return False
-
-        self._rows[index.row()][column] = parsed_value
-
-        if self._network is not None:
-            df = getattr(self._network, self._component_name, None)
-            if df is not None and component_id in df.index and column in df.columns:
-                df.at[component_id, column] = parsed_value
-
+        if change is None:
+            return True
+        row[column] = change.new_value
         self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole, Qt.UserRole])
+        self.edit_applied.emit(change)
         return True
-
-    def _parse_value(self, value, old_value):
-        text = str(value).strip()
-
-        if text == "":
-            if old_value is None or pd.isna(old_value):
-                return None
-            return ""
-
-        if isinstance(old_value, bool):
-            return text.lower() in {"true", "1", "yes"}
-
-        if isinstance(old_value, int) and not isinstance(old_value, bool):
-            return int(text)
-
-        if isinstance(old_value, float):
-            return float(text)
-
-        return text
 
     def set_table_data(
         self,
@@ -216,7 +202,9 @@ class ComponentFilterProxyModel(QSortFilterProxyModel):
             return True
 
         numeric_types = (int, float)
-        if isinstance(left_value, numeric_types) and isinstance(right_value, numeric_types):
+        if isinstance(left_value, numeric_types) and isinstance(
+            right_value, numeric_types
+        ):
             return left_value < right_value
 
         if isinstance(left_value, bool) and isinstance(right_value, bool):
@@ -224,8 +212,10 @@ class ComponentFilterProxyModel(QSortFilterProxyModel):
 
         return str(left_value).casefold() < str(right_value).casefold()
 
-    
+
 class ComponentPage(QWidget):
+    network_edited = Signal(object)
+
     def __init__(self, component_name: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.component_name = component_name
@@ -234,6 +224,11 @@ class ComponentPage(QWidget):
         self._column_actions: dict[int, QAction] = {}
 
         self.model = ComponentTableModel(component_name=component_name)
+        self.edit_error_label = QLabel("")
+        self.edit_error_label.setWordWrap(True)
+        self.edit_error_label.setStyleSheet("color: #b36b00;")
+        self.model.edit_rejected.connect(self.edit_error_label.setText)
+        self.model.edit_applied.connect(self._on_edit_applied)
 
         self.proxy_model = ComponentFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
@@ -247,7 +242,7 @@ class ComponentPage(QWidget):
         self.clear_bus_filter_button = QPushButton("Clear Bus Filter")
         self.clear_bus_filter_button.setEnabled(False)
         self.clear_bus_filter_button.clicked.connect(self.clear_bus_filter)
-        
+
         self.columns_button = QPushButton("Columns")
         self.columns_menu = QMenu(self.columns_button)
         self.columns_button.setMenu(self.columns_menu)
@@ -286,11 +281,26 @@ class ComponentPage(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(controls_layout)
         layout.addWidget(self.table)
+        layout.addWidget(self.edit_error_label)
 
     def set_network(self, network) -> None:
+        if self.network is not network:
+            self.active_bus_filter = None
+            self.edit_error_label.clear()
         self.network = network
-        self.active_bus_filter = None
         self.refresh()
+
+    def _on_edit_applied(self, change) -> None:
+        self.edit_error_label.clear()
+        self.network_edited.emit(change)
+
+    def set_editing_enabled(self, enabled: bool) -> None:
+        self.model.editing_enabled = enabled
+        self.table.setEditTriggers(
+            QTableView.DoubleClicked | QTableView.EditKeyPressed
+            if enabled
+            else QTableView.NoEditTriggers
+        )
 
     def refresh(self) -> None:
         if self.network is None:
@@ -308,7 +318,7 @@ class ComponentPage(QWidget):
         self._update_filter_label()
 
         df_reset = df.reset_index()
-        
+
         columns = list(df_reset.columns)
 
         if "name" not in columns and len(columns) > 0:
@@ -361,7 +371,9 @@ class ComponentPage(QWidget):
 
         for index in indexes:
             value = self.table.model().data(index, Qt.DisplayRole)
-            grid[row_map[index.row()]][column_map[index.column()]] = "" if value is None else str(value)
+            grid[row_map[index.row()]][column_map[index.column()]] = (
+                "" if value is None else str(value)
+            )
 
         text = "\n".join("\t".join(row) for row in grid)
 

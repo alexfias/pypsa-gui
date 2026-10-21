@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer
 from PySide6.QtWidgets import (
     QLabel,
     QStackedWidget,
@@ -11,8 +12,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pypsa_gui.services.preprocessing import invalidate_results
 from pypsa_gui.models.network_location import NetworkLocation
 from pypsa_gui.models.session_view import PAGE_TO_SECTION
+from pypsa_gui.models.solver_settings import SolverSettings
 from pypsa_gui.ui.pages.analysis.prices_page import PricesPage
 from pypsa_gui.ui.pages.analysis.storage_page import StoragePage
 from pypsa_gui.ui.pages.buses_page import BusesPage
@@ -53,12 +56,14 @@ class CentralPanel(QWidget):
     scenario_requested = Signal(object)
     create_empty_network_requested = Signal()
     run_optimisation_requested = Signal()
+    solver_settings_changed = Signal(object)
 
     new_network_requested = Signal()
     open_network_requested = Signal()
     save_network_requested = Signal()
     save_network_as_requested = Signal()
     network_modified = Signal()
+    network_edit_applied = Signal(object)
 
     LAZY_PAGE_NAMES = {
         "Prices",
@@ -92,6 +97,8 @@ class CentralPanel(QWidget):
 
         self._current_network: Any | None = None
         self._current_workflow: WorkflowRecord | None = None
+        self._solver_settings = SolverSettings()
+        self._optimisation_running = False
         self._current_locations: (
             dict[str, NetworkLocation] | None
         ) = None
@@ -243,17 +250,67 @@ class CentralPanel(QWidget):
             widget.save_network_as_requested.connect(
                 self.save_network_as_requested.emit
             )
-            widget.network_modified.connect(
-                self.network_modified.emit
-            )
+            widget.setEnabled(not self._optimisation_running)
+            widget.network_modified.connect(self._on_builder_modified)
 
         if (
             name == "Optimisation"
             and isinstance(widget, OptimisationPage)
         ):
+            widget.set_solver_settings(self._solver_settings)
             widget.run_optimisation_requested.connect(
                 self.run_optimisation_requested.emit
             )
+
+        if isinstance(widget, SolverSettingsPage):
+            widget.load_settings(self._solver_settings)
+            widget.setEnabled(not self._optimisation_running)
+            widget.settings_changed.connect(self.solver_settings_changed.emit)
+
+        if isinstance(widget, ComponentPage):
+            widget.set_editing_enabled(not self._optimisation_running)
+            widget.network_edited.connect(self._on_component_edit)
+
+        if isinstance(widget, PreRunToolsPage):
+            widget.setEnabled(not self._optimisation_running)
+            widget.network_modified.connect(self._on_pre_run_modified)
+
+    def _queue_edit_refresh(self) -> None:
+        network = self._current_network
+        QTimer.singleShot(0, lambda: self._refresh_edit_views(network))
+
+    def _refresh_edit_views(self, network) -> None:
+        if network is not self._current_network:
+            return
+        self.refresh_after_network_edit()
+        builder = self.pages.get("Network Builder")
+        if isinstance(builder, NetworkBuilderPage):
+            builder.refresh_network_contents()
+        self.refresh_optimisation_results_state()
+        self.set_workflow(self._current_workflow)
+
+    def _on_component_edit(self, change) -> None:
+        if change.component == "buses" and change.attribute == "name":
+            for page in self.pages.values():
+                if isinstance(page, ComponentPage) and page.active_bus_filter == change.old_value:
+                    page.active_bus_filter = change.new_value
+                if isinstance(page, BusesPage):
+                    if page.selected_bus == change.old_value:
+                        page.selected_bus = change.new_value
+                    page.manual_buses = [change.new_value if bus == change.old_value else bus for bus in page.manual_buses]
+        self.network_modified.emit()
+        self.network_edit_applied.emit(change)
+        self._queue_edit_refresh()
+
+    def _on_builder_modified(self) -> None:
+        if self._current_network is not None:
+            invalidate_results(self._current_network)
+        self.network_modified.emit()
+        self._queue_edit_refresh()
+
+    def _on_pre_run_modified(self) -> None:
+        self.network_modified.emit()
+        self._queue_edit_refresh()
 
     def clear_module_pages(self) -> None:
         for page_name, widget in list(
@@ -359,6 +416,8 @@ class CentralPanel(QWidget):
         self,
         page: QWidget,
     ) -> None:
+        if isinstance(page, ComponentPage):
+            page.model.locations = self._current_locations
         if hasattr(page, "set_network"):
             page.set_network(
                 self._current_network
@@ -503,6 +562,15 @@ class CentralPanel(QWidget):
         if isinstance(page, OptimisationPage):
             page.refresh_results_state()
 
+    def set_solver_settings(self, settings: SolverSettings) -> None:
+        self._solver_settings = deepcopy(settings)
+        page = self.pages.get("Solver Settings")
+        if isinstance(page, SolverSettingsPage):
+            page.load_settings(settings)
+        page = self.pages.get("Optimisation")
+        if isinstance(page, OptimisationPage):
+            page.set_solver_settings(settings)
+
     def set_optimisation_running(
         self,
         running: bool,
@@ -510,6 +578,19 @@ class CentralPanel(QWidget):
         """
         Update the Optimisation page while a solve is running.
         """
+
+        self._optimisation_running = running
+        for widget in self.pages.values():
+            if isinstance(widget, ComponentPage):
+                widget.set_editing_enabled(not running)
+            elif isinstance(widget, NetworkBuilderPage):
+                widget.setEnabled(not running)
+        settings_page = self.pages.get("Solver Settings")
+        if isinstance(settings_page, SolverSettingsPage):
+            settings_page.setEnabled(not running)
+        pre_run_page = self.pages.get("Pre-Run Tools")
+        if isinstance(pre_run_page, PreRunToolsPage):
+            pre_run_page.setEnabled(not running)
 
         page = self.pages.get("Optimisation")
 

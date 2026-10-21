@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
+from copy import deepcopy
 from uuid import uuid4
 
 import pypsa
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from pypsa_gui.models.network_session import NetworkSession
+from pypsa_gui.models.solver_settings import SolverSettings
 from pypsa_gui.models.scenario_definition import (
     ScenarioDefinition,
 )
@@ -37,6 +40,7 @@ from pypsa_gui.services.network_io import (
     save_network_to_netcdf,
 )
 from pypsa_gui.services.network_store import NetworkStore
+from pypsa_gui.services.locations import load_locations
 from pypsa_gui.services.optimisation import OptimisationRunner
 from pypsa_gui.services.scenario_builder import (
     build_scenario_network,
@@ -62,6 +66,8 @@ class MainWindow(QMainWindow):
         self.optimisation_runner: OptimisationRunner | None = None
         self.optimisation_worker: OptimisationWorker | None = None
         self.optimisation_running = False
+        self._optimisation_session_id: str | None = None
+        self.default_solver_settings = SolverSettings()
 
         self.setWindowTitle("pypsa-gui")
         self.resize(1200, 800)
@@ -311,9 +317,13 @@ class MainWindow(QMainWindow):
         self.central_panel.network_modified.connect(
             self.on_network_builder_modified
         )
+        self.central_panel.network_edit_applied.connect(self.on_network_edit_applied)
 
         self.central_panel.run_optimisation_requested.connect(
             self.on_run_optimisation
+        )
+        self.central_panel.solver_settings_changed.connect(
+            self.on_solver_settings_changed
         )
 
         self.setCentralWidget(
@@ -534,6 +544,11 @@ class MainWindow(QMainWindow):
             is_running: bool,
     ) -> None:
         self.optimisation_running = is_running
+        session = self.network_store.get_session(self._optimisation_session_id)
+        if session is not None:
+            session.network._gui_edit_locked = is_running
+        self.save_action.setEnabled(not is_running)
+        self.save_as_action.setEnabled(not is_running)
 
         self.run_optimisation_action.setEnabled(
             not is_running
@@ -628,6 +643,11 @@ class MainWindow(QMainWindow):
             self.central_panel.rebuild_pages(
                 required_sections
             )
+
+        self.central_panel.set_solver_settings(
+            session.solver_settings if session is not None
+            else self.default_solver_settings
+        )
 
         if session is None:
             if pages_rebuilt:
@@ -736,9 +756,11 @@ class MainWindow(QMainWindow):
             name=session_name,
             network=network,
             source_path=source_path,
-            is_modified=False,
+            is_modified=source_path is None,
+            locations=load_locations(network),
             view_options=view_options,
             workflow=workflow or WorkflowRecord(),
+            solver_settings=deepcopy(self.default_solver_settings),
         )
 
         self.network_store.add_session(
@@ -959,140 +981,51 @@ class MainWindow(QMainWindow):
                 f"{exc}",
             )
 
-    def save_network(self) -> None:
+    def save_network(self) -> bool:
         session = self.active_session()
-
         if session is None:
-            QMessageBox.information(
-                self,
-                "No Network Loaded",
-                "There is no network loaded to save.",
-            )
-            return
+            QMessageBox.information(self, "No Network Loaded", "There is no network loaded to save.")
+            return False
+        return self._save_session(session)
 
-        if (
-                session.source_path is None
-                or session.source_path.suffix != ".nc"
-        ):
-            self.save_as_netcdf()
-            return
-
-        try:
-            save_network_to_netcdf(
-                session.network,
-                session.source_path,
-            )
-
-            session.is_modified = False
-
-            self.central_panel.set_network_builder_project_state(
-                name=session.name,
-                is_modified=False,
-            )
-            self._refresh_loaded_networks_dock()
-
-            self.setWindowTitle(
-                f"pypsa-gui - {session.name}"
-            )
-
-            self.log(
-                "Network saved to: "
-                f"{session.source_path}"
-            )
-
-        except Exception as exc:
-            self.log(
-                f"Error saving network: {exc}"
-            )
-
-            QMessageBox.critical(
-                self,
-                "Save Failed",
-                "Could not save network:"
-                "\n\n"
-                f"{exc}",
-            )
-
-    def save_as_netcdf(self) -> None:
+    def save_as_netcdf(self) -> bool:
         session = self.active_session()
-
         if session is None:
-            QMessageBox.information(
-                self,
-                "No Network Loaded",
-                "There is no network loaded to save.",
+            QMessageBox.information(self, "No Network Loaded", "There is no network loaded to save.")
+            return False
+        return self._save_session(session, save_as=True)
+
+    def _save_session(self, session: NetworkSession, *, save_as: bool = False) -> bool:
+        if self.optimisation_running:
+            QMessageBox.information(self, "Optimisation running", "Wait for optimisation to finish before saving.")
+            return False
+        path = session.source_path
+        if save_as or path is None or path.suffix.lower() != ".nc":
+            default = str(path) if path is not None and path.suffix.lower() == ".nc" else str(Path.home() / f"{session.name}.nc")
+            selected, _ = QFileDialog.getSaveFileName(
+                self, f"Save {session.name} As NetCDF", default, "NetCDF Files (*.nc)"
             )
-            return
-
-        default_path = (
-            str(session.source_path)
-            if (
-                    session.source_path is not None
-                    and session.source_path.suffix
-                    == ".nc"
-            )
-            else str(
-                Path.home()
-                / f"{session.name}.nc"
-            )
-        )
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save PyPSA Network As NetCDF",
-            default_path,
-            "NetCDF Files (*.nc)",
-        )
-
-        if not file_path:
-            self.log(
-                "Save cancelled."
-            )
-            return
-
-        if not file_path.endswith(".nc"):
-            file_path += ".nc"
-
+            if not selected:
+                self.log("Save cancelled.")
+                return False
+            path = Path(selected)
+            if path.suffix.lower() != ".nc":
+                path = Path(str(path) + ".nc")
         try:
-            save_network_to_netcdf(
-                session.network,
-                file_path,
-            )
-
-            session.source_path = Path(
-                file_path
-            )
-            session.name = Path(
-                file_path
-            ).stem
-            session.is_modified = False
-
-            self.central_panel.set_network_builder_project_state(
-                name=session.name,
-                is_modified=False,
-            )
-
-            self.setWindowTitle(
-                f"pypsa-gui - {session.name}"
-            )
-
-            self._refresh_loaded_networks_dock()
-
-            self.log(
-                f"Network saved to: {file_path}"
-            )
+            save_network_to_netcdf(session.network, path, locations=session.locations)
         except Exception as exc:
-            self.log(
-                f"Error saving network: {exc}"
-            )
-
-            QMessageBox.critical(
-                self,
-                "Save Failed",
-                "Could not save network:"
-                "\n\n"
-                f"{exc}",
-            )
+            self.log(f"Error saving network: {exc}")
+            QMessageBox.critical(self, "Save Failed", f"Could not save {session.name}:\n\n{exc}")
+            return False
+        session.source_path = path
+        session.name = path.stem
+        session.is_modified = False
+        if session is self.active_session():
+            self.central_panel.set_network_builder_project_state(name=session.name, is_modified=False)
+            self.setWindowTitle(f"pypsa-gui - {session.name}")
+        self._refresh_loaded_networks_dock()
+        self.log(f"Network saved to: {path}")
+        return True
 
     def on_network_builder_modified(self) -> None:
         session = self.active_session()
@@ -1112,9 +1045,28 @@ class MainWindow(QMainWindow):
             f"pypsa-gui - {session.name}*"
         )
 
+    def on_network_edit_applied(self, change) -> None:
+        session = self.active_session()
+        if session is not None:
+            WorkflowRecorder(session.workflow).record_modify_network(
+                modification="component_edit", parameters=asdict(change)
+            )
+            self.log(f"Edited {change.component} {change.name}: {change.attribute}")
+
     # ------------------------------------------------------------------
     # Optimisation
     # ------------------------------------------------------------------
+
+    def on_solver_settings_changed(self, settings: SolverSettings) -> None:
+        if self.optimisation_running:
+            return
+        session = self.active_session()
+        if session is None:
+            self.default_solver_settings = deepcopy(settings)
+        else:
+            session.solver_settings = deepcopy(settings)
+        self.central_panel.set_solver_settings(settings)
+        self.log(f"Applied solver settings: {settings.solver_name}")
 
     def on_run_optimisation(self) -> None:
         session = self.active_session()
@@ -1134,13 +1086,22 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.log(
-            "Starting optimisation for: "
-            f"{session.name}"
-        )
+        runner = OptimisationRunner(session.network, session.solver_settings)
+        try:
+            runner.validate()
+        except (ValueError, RuntimeError) as exc:
+            self.log(f"Invalid solver configuration: {exc}")
+            QMessageBox.critical(self, "Solver configuration", str(exc))
+            return
 
-        self.optimisation_runner = OptimisationRunner(
-            session.network
+        self.optimisation_runner = runner
+        self._optimisation_session_id = session.id
+        self.log(
+            f"Starting optimisation for: {session.name}; "
+            f"solver={runner.settings.solver_name}; "
+            f"options={runner.settings.to_solver_options()}; "
+            f"model_options={runner.settings.to_model_options()}; "
+            f"assign_all_duals={runner.settings.assign_all_duals}"
         )
 
         self.optimisation_worker = OptimisationWorker(
@@ -1200,36 +1161,31 @@ class MainWindow(QMainWindow):
             self,
             status,
     ) -> None:
-        session = self.active_session()
+        session = self.network_store.get_session(self._optimisation_session_id)
+        runner = self.optimisation_runner
 
         self.log(
             "Optimisation finished. "
             f"Status: {status}"
         )
 
-        if session is not None:
+        if session is not None and runner is not None:
             recorder = WorkflowRecorder(
                 session.workflow
             )
             recorder.record_optimization(
-                solver="gurobi",
-                options={
-                    "Method": 2,
-                    "Crossover": 0,
-                },
+                solver=runner.settings.solver_name,
+                options=runner.settings.to_solver_options(),
+                model_options=runner.settings.to_model_options(),
+                assign_all_duals=runner.settings.assign_all_duals,
                 status=str(status),
-            )
-            self.central_panel.set_workflow(
-                session.workflow
             )
 
             session.is_modified = True
 
-            # Rebuild the pages with the solved network.
-            self._refresh_active_session_ui()
-
-            # Ensure that the PDF report button is enabled.
-            self.central_panel.refresh_optimisation_results_state()
+            if session is self.active_session():
+                self._refresh_active_session_ui()
+                self.central_panel.refresh_optimisation_results_state()
 
         QMessageBox.information(
             self,
@@ -1246,10 +1202,6 @@ class MainWindow(QMainWindow):
         self.log(
             "Optimisation failed: "
             f"{error_message}"
-        )
-
-        self.central_panel.set_optimisation_running(
-            False
         )
 
         QMessageBox.critical(
@@ -1271,6 +1223,7 @@ class MainWindow(QMainWindow):
 
         self.optimisation_worker = None
         self.optimisation_runner = None
+        self._optimisation_session_id = None
 
     # ------------------------------------------------------------------
     # Other actions
@@ -1306,33 +1259,31 @@ class MainWindow(QMainWindow):
             "visualising PyPSA networks.",
         )
 
-    def closeEvent(
-            self,
-            event,
-    ) -> None:
-        worker_running = (
-                self.optimisation_worker is not None
-                and self.optimisation_worker.isRunning()
-        )
-
-        if not worker_running:
-            event.accept()
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Optimisation running",
-            "An optimisation is still running. "
-            "Close the application anyway?",
-            QMessageBox.Yes
-            | QMessageBox.No,
-            QMessageBox.No,
-        )
-
-        if reply == QMessageBox.Yes:
-            event.accept()
-        else:
+    def closeEvent(self, event) -> None:
+        worker_running = self.optimisation_worker is not None and self.optimisation_worker.isRunning()
+        if self.optimisation_running or worker_running:
+            QMessageBox.information(
+                self, "Optimisation running",
+                "Wait for optimisation to finish, or request cancellation before closing."
+            )
             event.ignore()
+            return
+        for session in self.network_store.list_sessions():
+            if not session.is_modified:
+                continue
+            reply = QMessageBox.question(
+                self, "Unsaved network changes",
+                f'Save changes to "{session.name}" before closing?',
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel or (reply == QMessageBox.Save and not self._save_session(session)):
+                event.ignore()
+                return
+            if reply not in (QMessageBox.Save, QMessageBox.Discard):
+                event.ignore()
+                return
+        event.accept()
 
     def _ask_for_view_options(
             self,
