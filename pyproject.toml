@@ -34,6 +34,10 @@ map = [
   "cartopy",
 ]
 
+pandapower = [
+  "openpyxl>=3.1",
+]
+
 [project.scripts]
 pypsa-gui = "pypsa_gui.main:main"
 

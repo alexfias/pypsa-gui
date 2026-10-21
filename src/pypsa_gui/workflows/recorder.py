@@ -54,16 +54,24 @@ class WorkflowRecorder:
         source_path: str | Path | None,
         checksum: str | None = None,
         network_name: str | None = None,
+        source_format: str | None = None,
+        import_notes: tuple[str, ...] | None = None,
     ) -> None:
-        """Record loading an existing PyPSA network."""
+        """Record loading or converting a network, including conversion notes."""
+
+        parameters = {
+            "source_path": source_path,
+            "checksum": checksum,
+            "network_name": network_name,
+        }
+        if source_format is not None:
+            parameters["source_format"] = source_format
+        if import_notes is not None:
+            parameters["import_notes"] = import_notes
 
         self.record(
             WorkflowOperation.LOAD_NETWORK,
-            {
-                "source_path": source_path,
-                "checksum": checksum,
-                "network_name": network_name,
-            },
+            parameters,
         )
 
     def record_create_empty_network(

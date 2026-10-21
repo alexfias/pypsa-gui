@@ -14,7 +14,7 @@ The application combines a PySide6 interface with PyPSA, pandas, and Matplotlib.
 
 | Area | Current capabilities |
 | --- | --- |
-| Network files and sessions | Open NetCDF networks or PyPSA CSV folders; keep several networks in memory; switch the active network; save or save as NetCDF. |
+| Network files and sessions | Open NetCDF networks or PyPSA CSV folders; import balanced static pandapower JSON/Excel networks; keep several networks in memory; switch the active network; save or save as NetCDF. |
 | Scenario Builder | Create a country subset of the bundled teaching network, configure demand, technologies, investment costs, interconnection, and CO₂ policy. |
 | Network Builder | Create an empty network, place locations on a map, add internal buses and assets, and connect locations with lines or links. |
 | Component inspection | Inspect and edit static component tables; search, sort, show or hide columns, and copy selected cells in the general component pages. |
@@ -109,16 +109,17 @@ Unavailable solvers produce an explicit error; the application does not silently
 ```bash
 python -m pip install -e ".[map]"
 python -m pip install -e ".[dev]"
+python -m pip install -e ".[pandapower]"
 ```
 
-The `map` extra installs Cartopy; the `dev` extra installs pytest, Black, and Ruff. Geographical plotting works without Cartopy. The **Network Map** renderer uses locally cached Cartopy coastline and border data when available, and otherwise displays the network on longitude/latitude axes.
+The `map` extra installs Cartopy; the `dev` extra installs pytest, Black, and Ruff. The `pandapower` extra installs **openpyxl for Excel import**; pandapower JSON import needs no extra packages. Pandapower itself is not installed into the GUI environment. Geographical plotting works without Cartopy. The **Network Map** renderer uses locally cached Cartopy coastline and border data when available, and otherwise displays the network on longitude/latitude axes.
 
 The base installation includes PyPSA, HiGHS, pandas, PySide6, Matplotlib, NetworkX, and ReportLab. Dependency versions are not currently locked.
 
 ## First walkthrough
 
 1. Start `pypsa-gui`.
-2. Use **File → Open NetCDF Network...** or **File → Open CSV Folder...**. For an included example, open `src/pypsa_gui/data/teaching/elec_s_37.nc` from the repository.
+2. Use **File → Open NetCDF Network...**, **File → Open CSV Folder...**, or **File → Import pandapower Network...**. For an included example, open `src/pypsa_gui/data/teaching/elec_s_37.nc` from the repository.
 3. Choose **Full** to expose all sections. The **Loaded Networks** dock selects the active network.
 4. Explore **Overview**, the component tables, and **Components → Buses**. Use the bus diagram to inspect equipment and neighbouring buses.
 5. Open **Plots → Network Map**. Try Auto, Geographical, and Schematic layouts, and switch between topology and installed generation capacity.
@@ -127,6 +128,38 @@ The base installation includes PyPSA, HiGHS, pandas, PySide6, Matplotlib, Networ
 8. Save the network through **File → Save As NetCDF...**. Export the workflow JSON separately from **Overview → Workflow** if needed.
 
 Workspace presets control navigation: **Full** exposes all sections; **Lightweight** exposes Build, Components, and Run; **Analysis** exposes Overview, Analysis, and Plots. A Custom option selects individual sections.
+
+## Importing a pandapower network
+
+Export the network from your existing pandapower environment:
+
+```python
+import pandapower as pp
+
+pp.to_json(net, "my_network.json")
+# Alternatively: pp.to_excel(net, "my_network.xlsx")
+```
+
+In the GUI, choose **File → Import pandapower Network...**, select the export, and choose a workspace. The import summary explains the conversion and any omissions. The imported network opens in a **new, modified session**; **Save** asks for a new NetCDF file. The original pandapower export is not overwritten. Cancellation or a conversion error leaves existing sessions unchanged. Import is disabled while optimisation is running.
+
+Standard pandapower **2.x/3.x** JSON exports and current-format `.xlsx` workbooks are accepted. Excel needs `python -m pip install -e ".[pandapower]"`. Older kW-based formats, pickle files, encrypted JSON and custom serialisation layouts must first be re-exported with pandapower. The importer reads plain tables without instantiating serialised Python objects or importing pandapower, avoiding its dependency constraints in the PyPSA environment.
+
+| Source data | Conversion |
+| --- | --- |
+| Buses and names | Nominal voltage and available GeoJSON/legacy coordinates; unique IDs such as `bus 10`. Original labels remain in `pandapower_name`; the original bus mapping and labels are saved in NetCDF metadata. Coordinates are copied without reprojection. |
+| Loads and generators | Scaled MW/Mvar setpoints; PV/PQ/slack controls and voltage setpoints; explicit active-power bounds. Non-controllable generators retain fixed active dispatch. External grids become slack generators with `p_set` unset so they can balance the network. |
+| Lines | Explicit resistance/reactance, capacitance and conductance; parallel circuits, three-phase apparent-power rating, derating and loading limits. Standard-type names are not required in PyPSA. |
+| Two-winding transformers | Explicit T-model impedances on their own MVA base, parallel units, no-load losses, fixed phase shifts and fixed ratio taps on the HV or LV side. Rated terminal voltages must match the buses. |
+| Shunts | Conductance and susceptance, including the selected step. |
+| Status and switches | Out-of-service elements and equipment on inactive buses are excluded. Closed ideal bus-bus switches fuse buses; open bus switches leave them separate. Open line/transformer switches omit the entire branch, including charging/magnetising admittance; this approximation is reported. |
+
+This is a **balanced static conversion**, not a reproduction of pandapower OPF, controllers or time-series simulations. It deliberately imports no solved results. OPF cost tables are reported but not converted; reactive-power limits, distributed slack and protection/short-circuit data are not modelled. Generator `p_nom` is a normalisation base derived from setpoints, ratings and finite bounds, not an inferred installed MW capacity. Missing dispatch bounds remain unlimited and are reported. Review capacities, bounds and costs before optimisation or capacity analysis.
+
+Imported non-slack generators retain `p_set` for the source operating point. In recent PyPSA versions this **also fixes their dispatch during optimisation**. To allow economic redispatch, set the relevant generator `p_set` cells to `nan`, then configure bounds and marginal costs. Fixed non-controllable generators additionally retain equal lower/upper dispatch bounds.
+
+Active unsupported equipment is rejected with an explanatory error, including storage, three-winding transformers, impedance elements, DC/FACTS equipment, asymmetric elements and controllers. Voltage-dependent ZIP/controllable loads, non-ideal bus switches, conflicting voltage setpoints, multiple slack sources in one connected island and advanced transformer/shunt characteristic tables are also rejected. Unknown non-empty equipment tables are rejected. The existing GUI power-flow menu remains a placeholder; this feature adds import only.
+
+For programmatic use, `load_network_from_pandapower(path)` returns a result with `.network` and `.notes`. `convert_pandapower_network(net)` accepts a pandapower-style mapping of tables without modifying it. Both live in [services/pandapower_import.py](src/pypsa_gui/services/pandapower_import.py). See the upstream [pandapower file formats](https://pandapower.readthedocs.io/en/stable/file_io.html) for export commands.
 
 ## Building models
 
@@ -212,6 +245,7 @@ The following distinctions matter when using the current version:
 | --- | --- |
 | Solver lifecycle | Applied settings persist for the open session, not across application restarts. Cancellation is best effort and depends on the running solver model exposing a termination method; it may be unavailable during model construction or in some solver/library versions. |
 | Power flow | The navigation page is a placeholder, and the menu action does not execute a power flow. |
+| Pandapower import | Balanced static JSON/Excel conversion with a documented component subset. Costs, controllers, source results and time series are not converted. Unsupported active equipment is rejected; open-branch approximations and missing dispatch bounds are reported. See [import details](#importing-a-pandapower-network). |
 | Component editing | Scalar input edits and GUI renames are validated. Stochastic component indices, structured/piecewise values and direct time-series editing are not supported by the table editor. Custom external metadata references are not automatically rewritten. |
 | Saving changes | Table, builder and pre-run edits are tracked, and closing offers Save/Discard/Cancel. Network data and builder locations persist in NetCDF; the session list and workspace layout are not a persistent project format. |
 | Temporal reduction | Weighted block averaging preserves represented duration and weighted input profiles, but smooths peaks and changes correlations/storage behaviour. Unit commitment, maintenance, ramp limits, fixed storage-state targets, transport delays, multi-period and stochastic networks are rejected by this tool. |
@@ -221,7 +255,7 @@ The following distinctions matter when using the current version:
 | Workflow records | Table edits and renames are recorded alongside creation/loading/optimisation operations. Detailed builder/pre-run replay is not complete; workflow JSON is exported separately and is not a complete project archive. |
 | Research modules | Flow Tracing currently previews input arrays for link-based networks; it does not calculate flow attribution. ML Surrogate can save/load configuration, but dataset processing, training, and evaluation are placeholders. |
 
-The map displays multi-terminal links between `bus0` and `bus1`; local bus/location diagrams provide more terminal detail. Symbols are simplified, not an IEC-certified symbol set. Pandapower import and automated scenario comparison are not implemented.
+The map displays multi-terminal links between `bus0` and `bus1`; local bus/location diagrams provide more terminal detail. Symbols are simplified, not an IEC-certified symbol set. Automated scenario comparison is not implemented.
 
 The bundled teaching network was exported by an older PyPSA version and may produce compatibility warnings. Check model assumptions, component data, snapshot weights, and solver results when using it with another PyPSA version. For emissions accounting, compare against [PyPSA's documented formulation](https://docs.pypsa.org/latest/user-guide/optimization/global-constraints/#primary-energy).
 
@@ -246,7 +280,7 @@ To add a research module, implement `BaseResearchModule` from [modules/base.py](
 ## Development and validation
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,pandapower]"
 python -m pytest -q
 ```
 
@@ -256,11 +290,13 @@ For a headless Linux run:
 QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg python -m pytest -q
 ```
 
-The suite contains **126 test cases**: 33 visualisation checks, 22 solver-configuration checks, 35 scientific-consistency checks and 36 editing-integrity checks. Solver tests include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
+The suite contains **166 test cases**: 33 visualisation checks, 22 solver-configuration checks, 35 scientific-consistency checks, 36 editing-integrity checks and 40 pandapower-import checks. Solver tests include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
 
 Scientific checks cover analytic weighted-emissions examples, agreement with a binding PyPSA CO2 constraint, dynamic CO2 pricing, static/dynamic load combinations, weighted prices/storage/congestion, real HiGHS capacity investments, NetCDF constraint persistence, aggregation conservation, invalid-input rejection, atomic GUI changes and PDF generation. NetCDF tests disable PyPSA's optional online version check.
 
 Editing checks cover rename-and-solve equivalence, time-series and multi-port reference preservation, saved capacity selections and locations, invalid-edit rollback, read-only outputs, per-session dirty state, view refresh, solve-time locks, duplicate links, profile failures, atomic export failure, and Save/Discard/Cancel across multiple sessions.
+
+Pandapower checks use real JSON/Excel exports and independent AC reference results generated with pandapower 3.5.6 in a separate environment. They compare PyPSA bus voltages/angles and active/reactive branch flows for HV/LV taps, parallel equipment and shunts. They also cover switch fusion, inactive equipment, units, unsupported-data rejection, source immutability, NetCDF metadata, a real HiGHS solve after configuring costs, and GUI import/cancel/save behaviour. The fixture generator is [tests/data/generate_pandapower_reference.py](tests/data/generate_pandapower_reference.py). Excel cases skip if openpyxl is absent.
 
 The suite was run with Python 3.12, PyPSA 1.4.0, HiGHS 1.15.1, PySide6 6.12.0, and pandas 3.0.6. This is evidence for the covered behaviour, not full application or cross-platform validation. The repository does not yet include a CI workflow or broad regression coverage for all scenario construction and editing paths.
 

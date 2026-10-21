@@ -41,6 +41,7 @@ from pypsa_gui.services.network_io import (
 )
 from pypsa_gui.services.network_store import NetworkStore
 from pypsa_gui.services.locations import load_locations
+from pypsa_gui.services.pandapower_import import load_network_from_pandapower
 from pypsa_gui.services.optimisation import OptimisationRunner
 from pypsa_gui.services.scenario_builder import (
     build_scenario_network,
@@ -139,6 +140,12 @@ class MainWindow(QMainWindow):
             self.on_open_csv_folder
         )
 
+        self.import_pandapower_action = QAction("Import pandapower Network...", self)
+        self.import_pandapower_action.setStatusTip(
+            "Convert a pandapower JSON or Excel export into a new PyPSA network"
+        )
+        self.import_pandapower_action.triggered.connect(self.on_import_pandapower_network)
+
         self.save_action = QAction(
             "Save",
             self,
@@ -229,6 +236,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self.open_csv_action
         )
+        file_menu.addAction(self.import_pandapower_action)
         file_menu.addSeparator()
         file_menu.addAction(
             self.save_action
@@ -549,6 +557,7 @@ class MainWindow(QMainWindow):
             session.network._gui_edit_locked = is_running
         self.save_action.setEnabled(not is_running)
         self.save_as_action.setEnabled(not is_running)
+        self.import_pandapower_action.setEnabled(not is_running)
 
         self.run_optimisation_action.setEnabled(
             not is_running
@@ -980,6 +989,41 @@ class MainWindow(QMainWindow):
                 "\n"
                 f"{exc}",
             )
+
+    def on_import_pandapower_network(self) -> None:
+        if self.optimisation_running:
+            QMessageBox.information(self, "Optimisation Running", "Wait for optimisation to finish before importing a network.")
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import pandapower Network", "",
+            "pandapower Exports (*.json *.xlsx);;pandapower JSON (*.json);;pandapower Excel (*.xlsx)",
+        )
+        if not file_path:
+            self.log("Pandapower import cancelled.")
+            return
+        view_options = self._ask_for_view_options()
+        if view_options is None:
+            self.log("Workspace selection cancelled.")
+            return
+        try:
+            result = load_network_from_pandapower(file_path)
+        except Exception as exc:
+            self.log(f"Error importing pandapower network: {exc}")
+            QMessageBox.critical(self, "Import Error", f"Could not import pandapower network:\n\n{exc}")
+            return
+        workflow = WorkflowRecord()
+        WorkflowRecorder(workflow).record_load_network(
+            source_path=file_path, network_name=Path(file_path).stem,
+            source_format="pandapower", import_notes=result.notes,
+        )
+        self._add_network_session(
+            network=result.network, source_path=None, view_options=view_options,
+            name=Path(file_path).stem, workflow=workflow,
+        )
+        self.log(f"Imported pandapower network: {file_path}")
+        for note in result.notes:
+            self.log(note)
+        QMessageBox.information(self, "Pandapower Import", result.summary())
 
     def save_network(self) -> bool:
         session = self.active_session()
