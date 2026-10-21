@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import math
+
+from pypsa_gui.services.preprocessing import invalidate_results
+
 import json
 from collections.abc import Callable, Iterable, Mapping
 from importlib import resources
@@ -1013,38 +1017,32 @@ class TimeSeriesLibrary:
                 f"{generator_name}"
             )
 
-        profile = self.get_profile(
-            profile_id
-        )
-
-        if (
-            initialize_default_snapshots
-            and self._has_default_placeholder_snapshots(
-                network
-            )
-        ):
-            network.set_snapshots(
-                profile.values.index
-            )
-
-        if target_capacity_factor is None:
-            values = profile.aligned_to(
-                network.snapshots
-            )
-        else:
-            aligned = profile.aligned_to(
-                network.snapshots
-            )
-            values = self.scale_to_capacity_factor(
-                aligned,
-                target_capacity_factor,
-            )
-
-        network.generators_t.p_max_pu.loc[
-            :,
-            generator_name,
-        ] = values
-
+        if getattr(network, "_gui_edit_locked", False):
+            raise ValueError("Network inputs are locked while optimisation is running.")
+        profile = self.get_profile(profile_id)
+        initialise = initialize_default_snapshots and self._has_default_placeholder_snapshots(network)
+        snapshots = profile.values.index if initialise else network.snapshots
+        # Alignment/scaling may fail: finish it before changing any network data.
+        values = profile.aligned_to(snapshots)
+        if target_capacity_factor is not None:
+            values = self.scale_to_capacity_factor(values, target_capacity_factor)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Availability profile values must be finite.")
+        if initialise:
+            # Existing one-snapshot inputs are constants, not disposable results.
+            constant_inputs = {}
+            for component in network.components:
+                for attribute, frame in component.dynamic.items():
+                    if not frame.empty and component.defaults.at[attribute, "status"] != "Output":
+                        constant_inputs[component.name, attribute] = pd.DataFrame(
+                            [frame.iloc[0].to_numpy()] * len(snapshots),
+                            index=snapshots, columns=frame.columns,
+                        )
+            network.set_snapshots(snapshots)
+            for (component, attribute), frame in constant_inputs.items():
+                network.components[component].dynamic[attribute] = frame
+        network.generators_t.p_max_pu.loc[:, generator_name] = values
+        invalidate_results(network)
         return values
 
     @staticmethod

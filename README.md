@@ -176,7 +176,7 @@ In **Pre-Run Tools → Capacity Constraints**:
 - **Total capacity of all matches** adds a true `=`, `>=` or `<=` constraint on the sum of capacity. Fixed assets contribute their existing capacity; the optimiser chooses the distribution across extendable assets.
 - **Limit each matching asset individually** tightens `p_nom_min`/`p_nom_max` or `e_nom_min`/`e_nom_max`. Equality sets both bounds. Fixed assets remain fixed and must already satisfy the requested limit; conflicts are reported before changes are applied.
 - Generator, Link and StorageUnit limits are in **MW**; Store limits are in **MWh**. Investment extendability is never enabled implicitly.
-- Total limits retain the selected asset names and survive NetCDF saving. Deleted/renamed assets cause a validation error rather than silently changing the selection. Reapplying the same selection and sense replaces its limit. **Preview Changes** lists applied totals; **Clear GUI Total Capacity Limits** removes them. Per-asset bounds remain editable in component tables.
+- Total limits retain the selected asset names and survive NetCDF saving. GUI renames update the saved selection. Assets deleted or renamed outside the GUI cause a validation error rather than silently changing the selection. Reapplying the same selection and sense replaces its limit. **Preview Changes** lists applied totals; **Clear GUI Total Capacity Limits** removes them. Per-asset bounds remain editable in component tables.
 
 For an exported network containing GUI total limits, solve through the application service:
 
@@ -190,6 +190,20 @@ status, condition = run_network_optimisation(network)
 
 Pre-run options are checked on a candidate network and applied together. A validation failure leaves the live network unchanged. Successful changes mark the session modified, refresh dependent pages, and clear previous results; rerun optimisation before analysing or exporting results. Pre-run tools are disabled during a solve. Load-shedding capacity based on peak load includes both static and dynamic demand.
 
+## Editing integrity and saving
+
+Component tables use a shared validation service. A successful input edit clears calculated results and the optimisation model, marks its session modified, records the change in the workflow, and refreshes dependent tables/diagrams. Analysis pages refresh when reopened. Unchanged values and rejected edits preserve the saved/solved state; validation errors appear below the table.
+
+- **Renaming:** updates static names and all associated time-series columns. Bus renames also update single/multi-port connections, bus-specific global constraints, builder locations, active bus filters and diagram selections. Saved GUI capacity selections follow component renames.
+- **Validation:** checks names, boolean/integer/number parsing, required bus references, selected physical ranges, investment/dispatch bounds and conflicts with saved total-capacity limits. Signed prices and Link efficiencies above one remain valid inputs. This is input validation, not a guarantee of overall model feasibility.
+- **Read-only fields:** calculated outputs such as `p_nom_opt`, derived bus controls, structured values, and static values with time-series overrides cannot be edited in the scalar table. Hover over a cell for the reason. Edit time series through Python/the profile tools; a full time-series editor is not implemented.
+- **Builder changes:** additions clear previous results and mark the session modified. Duplicate links are rejected. Profile alignment/scaling finishes before snapshots change; initialising snapshots preserves existing one-snapshot input series as constants.
+- **During optimisation:** component edits, builder/pre-run changes and saving are disabled. Wait for completion or request cancellation before closing.
+
+**Save** and **Save As** write to a temporary file in the destination directory and replace the target only after a complete export. A failed export leaves the previous saved file intact and the session modified. Builder location labels and membership are saved in NetCDF metadata; simply opening the builder does not change network inputs.
+
+Closing checks **every modified session**, offering **Save / Discard / Cancel**. Cancelling either close or a save dialog, or encountering a save error, leaves the application open. A successful save clears the modified flag only for that session. Session/workspace layout and workflow history are still separate from the network file; export workflow JSON explicitly when needed.
+
 ## Known limitations
 
 The following distinctions matter when using the current version:
@@ -198,13 +212,13 @@ The following distinctions matter when using the current version:
 | --- | --- |
 | Solver lifecycle | Applied settings persist for the open session, not across application restarts. Cancellation is best effort and depends on the running solver model exposing a termination method; it may be unavailable during model construction or in some solver/library versions. |
 | Power flow | The navigation page is a placeholder, and the menu action does not execute a power flow. |
-| Component editing | Renaming a component in a general component table changes its static index without renaming its time-series columns. Avoid this operation for assets with time series. Validation and refresh after edits are incomplete. |
-| Saving changes | Pre-run changes mark the session modified; general table-edit tracking remains incomplete. Closing the application does not prompt to save modified networks. Save explicitly; the session list and workspace state are not a persistent project format. |
+| Component editing | Scalar input edits and GUI renames are validated. Stochastic component indices, structured/piecewise values and direct time-series editing are not supported by the table editor. Custom external metadata references are not automatically rewritten. |
+| Saving changes | Table, builder and pre-run edits are tracked, and closing offers Save/Discard/Cancel. Network data and builder locations persist in NetCDF; the session list and workspace layout are not a persistent project format. |
 | Temporal reduction | Weighted block averaging preserves represented duration and weighted input profiles, but smooths peaks and changes correlations/storage behaviour. Unit commitment, maintenance, ramp limits, fixed storage-state targets, transport delays, multi-period and stochastic networks are rejected by this tool. |
 | Capacity controls | Per-asset limits tighten investment bounds. Total limits are saved in network metadata and added by the GUI optimisation service, including previews. Plain external `network.optimize()` does not install these custom limits; use `run_network_optimisation` or add them explicitly. Total limits currently support single-period, deterministic networks. |
 | Emissions scope | GUI and PDF share weighted, efficiency-corrected generator emissions. This is not a complete sector-coupled carbon account: non-cyclic storage inventory changes and separate Link/Process emissions are excluded. Missing carrier factors count as zero; invalid emitting-generator efficiencies are rejected. |
-| Result validity | Pre-run changes clear old results and the model. Other input-edit paths do not yet systematically invalidate results. PDF availability is inferred from generator-dispatch data, not from a fresh successful solve. Rerun after input changes and inspect solver termination status. |
-| Workflow records | Selected creation, loading, and optimisation operations are recorded. Not every edit is captured; workflow JSON is exported separately and is not a complete replayable project archive. |
+| Result validity | Supported GUI input edits clear old outputs and the model. External Python mutations bypass GUI tracking. Imported results are identified from dispatch data; there is no complete provenance/freshness audit for external files. Inspect solver termination status. |
+| Workflow records | Table edits and renames are recorded alongside creation/loading/optimisation operations. Detailed builder/pre-run replay is not complete; workflow JSON is exported separately and is not a complete project archive. |
 | Research modules | Flow Tracing currently previews input arrays for link-based networks; it does not calculate flow attribution. ML Surrogate can save/load configuration, but dataset processing, training, and evaluation are placeholders. |
 
 The map displays multi-terminal links between `bus0` and `bus1`; local bus/location diagrams provide more terminal detail. Symbols are simplified, not an IEC-certified symbol set. Pandapower import and automated scenario comparison are not implemented.
@@ -242,15 +256,17 @@ For a headless Linux run:
 QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg python -m pytest -q
 ```
 
-The suite contains **90 test cases**: 33 visualisation checks, 22 solver-configuration checks and 35 scientific-consistency checks. Solver tests include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
+The suite contains **126 test cases**: 33 visualisation checks, 22 solver-configuration checks, 35 scientific-consistency checks and 36 editing-integrity checks. Solver tests include real HiGHS LP/MIP solves, native options, changing thread counts, menu/button execution, applied settings across session/page changes, workflow recording, and invalid-configuration handling. Gurobi argument forwarding is tested with a test double; a licensed Gurobi solve has not been exercised in this review.
 
 Scientific checks cover analytic weighted-emissions examples, agreement with a binding PyPSA CO2 constraint, dynamic CO2 pricing, static/dynamic load combinations, weighted prices/storage/congestion, real HiGHS capacity investments, NetCDF constraint persistence, aggregation conservation, invalid-input rejection, atomic GUI changes and PDF generation. NetCDF tests disable PyPSA's optional online version check.
+
+Editing checks cover rename-and-solve equivalence, time-series and multi-port reference preservation, saved capacity selections and locations, invalid-edit rollback, read-only outputs, per-session dirty state, view refresh, solve-time locks, duplicate links, profile failures, atomic export failure, and Save/Discard/Cancel across multiple sessions.
 
 The suite was run with Python 3.12, PyPSA 1.4.0, HiGHS 1.15.1, PySide6 6.12.0, and pandas 3.0.6. This is evidence for the covered behaviour, not full application or cross-platform validation. The repository does not yet include a CI workflow or broad regression coverage for all scenario construction and editing paths.
 
 Priorities for the next development stage:
 
-1. Centralise validated network edits, safe renaming, result invalidation, and save-state tracking.
+1. Extend the edit service to time-series/bulk editing and undo/redo; add result provenance and complete workflow replay.
 2. Extend carbon accounting to sector-coupled networks and validate temporal-reduction accuracy on larger, representative models.
 3. Add regression tests for those workflows and run them in CI with a documented dependency set; broaden solver and platform coverage.
 4. Implement power flow and complete research-module backends as separate, tested additions.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import math
 from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
@@ -239,6 +240,9 @@ class WorkflowRecorder:
                 normalized_items,
                 key=repr,
             )
+
+        if isinstance(value, float) and not math.isfinite(value):
+            return str(value)
 
         if isinstance(value, (str, int, float, bool)):
             return value

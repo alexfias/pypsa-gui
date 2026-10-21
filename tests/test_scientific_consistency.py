@@ -79,6 +79,7 @@ def offline_pypsa():
 
 @pytest.fixture
 def quiet_dialogs(monkeypatch):
+    monkeypatch.setattr(QMessageBox, "question", Mock(return_value=QMessageBox.Discard))
     for name in ("information", "warning", "critical"):
         monkeypatch.setattr(QMessageBox, name, Mock(return_value=QMessageBox.Ok))
 
